@@ -6,10 +6,12 @@ from dotenv import load_dotenv
 
 # パイプライン処理関数のインポート
 from pipelines.pipeline_1_rag_source import process_pipeline_1
+
 # from pipelines.pipeline_2_lora_finetune import process_pipeline_2 # 将来追加
 # from pipelines.pipeline_3_parser_finetune import process_pipeline_3 # 将来追加
 # from pipelines.pipeline_4_embedding_finetune import process_pipeline_4 # 将来追加
-
+from utils.persona_generator import generate_persona
+from pipelines.pipeline_2_lora_finetune import process_lora_data_generation
 
 # .envファイルから環境変数を読み込む
 load_dotenv()
@@ -38,8 +40,19 @@ def dispatch_job(job_data: dict):
 
     if pipeline == "rag_source":
         return process_pipeline_1(job_data, GEMINI_API_KEY)
-    # elif pipeline == 'lora_finetune':
-    #     return process_pipeline_2(job_data, GEMINI_API_KEY)
+    elif pipeline == "persona_generation":
+        # ペルソナ生成関数を呼び出す
+        persona_obj = generate_persona(
+            paper_theme=job_data["paper_theme"],
+            age_group=job_data["age_group"],
+            gender=job_data["gender"],
+            gemini_api_key=GEMINI_API_KEY,
+        )
+        # 結果をJSON文字列として返す
+        return {"content": persona_obj.model_dump_json(indent=2, ensure_ascii=False), "extension": ".json"}
+    elif pipeline == "lora_data_generation":
+        return process_lora_data_generation(job_data, GEMINI_API_KEY)
+
     else:
         raise ValueError(f"'{pipeline}'は未定義のパイプラインです。")
 

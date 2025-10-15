@@ -1,4 +1,7 @@
 import os
+import time
+import threading
+import re
 from flask import Flask, request, jsonify, render_template_string
 from dotenv import load_dotenv
 from core.job_manager import JobManager
@@ -6,6 +9,13 @@ from core.result_handler import ResultHandler
 
 # .envファイルから環境変数を読み込む
 load_dotenv()
+RAG_SOURCE_DIR = "output/pipeline_1_rag_source"
+PROCESSED_MARKDOWN_LOG = "output/processed_markdown.log"
+GENERATION_TARGETS = [
+    {"age_group": "70代", "gender": "女性"},
+    {"age_group": "80代", "gender": "男性"},
+    {"age_group": "60代", "gender": "女性"},
+]
 
 # アプリケーションの初期化
 app = Flask(__name__)
@@ -13,23 +23,90 @@ job_manager = JobManager()
 result_handler = ResultHandler(base_output_dir="output")
 
 
-# テスト用のダミーデータ生成
-def populate_dummy_jobs():
-    """起動時に動作確認用のダミージョブを投入する"""
-    print("テスト用のダミージョブを投入しています...")
-    dummy_urls = [
-        "https://www.jstage.jst.go.jp/article/rika/33/3/33_425/_pdf",
-        "https://www.jstage.jst.go.jp/article/rika/20/3/20_3_227/_pdf",
-        "https://www.jstage.jst.go.jp/article/jjrmc/54/3/54_201/_pdf",
-    ]
-    for url in dummy_urls:
-        job_data = {
-            "pipeline": "rag_source",  # パイプライン1のジョブ
-            "url": url,
-            "metadata": {"title": f"Dummy Title for {url}"},
-        }
-        job_manager.add_job(job_data)
-    print(f"{len(dummy_urls)}件のダミージョブを投入しました。")
+# パイプライン2ジョブ生成ロジック
+def extract_theme_from_markdown(filepath: str) -> str:
+    """Markdownファイルからより賢くテーマを抽出する"""
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read(2000)  # 検索範囲を調整
+
+        # YAMLフロントマターをスキップする
+        if content.startswith("---"):
+            end_marker = content.find("---", 3)
+            if end_marker != -1:
+                content = content[end_marker + 3 :]
+
+        # H1見出し (#) を最優先で探す
+        h1_match = re.search(r"^#\s*(.*?)\n", content, re.MULTILINE)
+        if h1_match:
+            theme = h1_match.group(1).strip().replace("\n", " ")
+            if all(keyword not in theme for keyword in ["はじめに", "要旨", "おわりに"]):
+                return theme
+
+        # H2見出し (##) を次に探す
+        h2_matches = re.findall(r"^##\s*(.*?)\n", content, re.MULTILINE)
+        for theme in h2_matches:
+            theme = theme.strip().replace("\n", " ")  # 改行をスペースに置換
+            if all(keyword not in theme for keyword in ["要旨", "はじめに", "おわりに", "まとめ", "結論"]):
+                return theme
+
+    except Exception as e:
+        print(f"[ThemeExtractor] テーマ抽出中にエラー: {e}")
+
+    # 最終手段
+    return os.path.basename(os.path.splitext(filepath)[0])
+
+
+def markdown_folder_monitor():
+    """
+    RAGソースフォルダを監視し、新しいMarkdownファイルが見つかったら
+    ペルソナ生成ジョブを投入する。
+    """
+    print("[Monitor] Markdownフォルダの監視を開始します...")
+    processed_files = set()
+
+    # 過去に処理したファイルのログを読み込む
+    try:
+        with open(PROCESSED_MARKDOWN_LOG, "r", encoding="utf-8") as f:
+            processed_files = set(line.strip() for line in f)
+        print(f"[Monitor] {len(processed_files)}件の処理済みファイルをログから読み込みました。")
+    except FileNotFoundError:
+        pass
+
+    while True:
+        try:
+            if not os.path.exists(RAG_SOURCE_DIR):
+                time.sleep(10)
+                continue
+
+            for filename in os.listdir(RAG_SOURCE_DIR):
+                if filename.endswith(".md") and filename not in processed_files:
+                    print(f"[Monitor] 新規Markdownファイルを検出: {filename}")
+                    filepath = os.path.join(RAG_SOURCE_DIR, filename)
+
+                    paper_theme = extract_theme_from_markdown(filepath)
+                    print(f"  -> 抽出されたテーマ: {paper_theme}")
+
+                    # 定義されたターゲットごとにペルソナ生成ジョブを作成
+                    for target in GENERATION_TARGETS:
+                        job_data = {
+                            "pipeline": "persona_generation",  # ★新しいパイプライン名
+                            "paper_theme": paper_theme,
+                            "age_group": target["age_group"],
+                            "gender": target["gender"],
+                            "source_markdown": filename,  # 元となったファイル名を記録
+                        }
+                        job_manager.add_job(job_data)
+
+                    # 処理済みとして記録
+                    processed_files.add(filename)
+                    with open(PROCESSED_MARKDOWN_LOG, "a", encoding="utf-8") as f:
+                        f.write(filename + "\n")
+
+        except Exception as e:
+            print(f"[Monitor] フォルダ監視中にエラーが発生しました: {e}")
+
+        time.sleep(30)  # 30秒ごとにチェック
 
 
 # APIエンドポイントの定義
@@ -47,28 +124,51 @@ def get_job():
 
 @app.route("/submit-result", methods=["POST"])
 def submit_result():
-    """ワーカーが処理結果を送信するためのエンドポイント"""
     submission = request.json
     job_id = submission.get("job_id")
     status = submission.get("status")
+    pipeline = submission.get("pipeline")
+    original_job_data = job_manager.jobs.get(job_id, {}).get("data", {})
 
-    if not job_id or not status:
-        return jsonify({"error": "job_idとstatusは必須です"}), 400
+    if not all([job_id, status, pipeline]):
+        return jsonify({"error": "job_id, status, pipelineは必須です"}), 400
 
     if status == "completed":
-        pipeline = submission.get("pipeline")
         result = submission.get("result", {})
-        result_handler.save_result(job_id, pipeline, result)
+        # パイプライン2以降は、結果をファイルに保存するだけでなく、
+        # 次のステップのジョブを生成する必要があるかもしれない（将来実装）
+        saved_filename = f"{job_id}{result.get('extension', '.txt')}"
+        result_handler.save_result(job_id, pipeline, result, custom_filename=saved_filename)
         job_manager.update_job_status(job_id, "completed")
+
+        # ここからが重要
+        # もし完了したのがペルソナ生成ジョブなら、次のLoRAデータ生成ジョブを作る
+        if pipeline == "persona_generation":
+            print(f"[Hub] ペルソナ生成完了({job_id})。次のLoRAデータ生成ジョブを作成します。")
+            # 元のジョブ情報から、どの論文とペルソナを組み合わせるかを知る
+            source_markdown = original_job_data.get("source_markdown")
+            generated_persona_file = saved_filename
+
+            if source_markdown and generated_persona_file:
+                # ここで仕様書通り、逐次生成のジョブを投入する
+                # まずは最初のステップ（CurrentAssessment）のジョブだけを投入
+                lora_job_data = {
+                    "pipeline": "lora_data_generation",
+                    "source_markdown": source_markdown,
+                    "source_persona": generated_persona_file,
+                    "target_step": 0,  # 生成グループのインデックス (0 = CurrentAssessment)
+                    "previous_results": {},  # 最初のステップなので空
+                }
+                job_manager.add_job(lora_job_data)
+            else:
+                print("[Hub] 警告: LoRAジョブの作成に必要な情報が不足しています。")
+
     elif status == "failed":
-        pipeline = submission.get("pipeline")
         error_info = submission.get("error", {})
         result_handler.save_error(job_id, pipeline, error_info)
         job_manager.update_job_status(job_id, "failed", message=error_info.get("message"))
-    else:
-        return jsonify({"error": f"不正なステータスです: {status}"}), 400
 
-    return jsonify({"message": f"ジョブ {job_id} の結果を受理しました"}), 200
+    return jsonify({"message": "結果受理"}), 200
 
 
 # 管理用UI
@@ -126,13 +226,11 @@ def dashboard():
 
 # サーバーの起動
 if __name__ == "__main__":
-    # config.iniから設定を読み込み
     host = os.getenv("HUB_HOST", "127.0.0.1")
     port = int(os.getenv("HUB_PORT", 5000))
 
-    # 起動時にダミージョブを投入
-    populate_dummy_jobs()
+    # フォルダ監視スレッドをバックグラウンドで開始
+    monitor_thread = threading.Thread(target=markdown_folder_monitor, daemon=True)
+    monitor_thread.start()
 
-    # Flaskサーバーを起動
-    # debug=Falseにしないと、起動時にpopulate_dummy_jobsが2回実行されることがある
     app.run(host=host, port=port, debug=False)

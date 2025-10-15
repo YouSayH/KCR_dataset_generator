@@ -13,6 +13,8 @@ class ResultHandler:
         self.pipelines_dir = {
             "rag_source": os.path.join(self.base_dir, "pipeline_1_rag_source"),
             "lora_finetune": os.path.join(self.base_dir, "pipeline_2_lora_finetune"),
+            "persona_generation": os.path.join(self.base_dir, "pipeline_2_lora_finetune", "personas"),
+            "lora_data_generation": os.path.join(self.base_dir, "pipeline_2_lora_finetune"),
             "parser_finetune": os.path.join(self.base_dir, "pipeline_3_parser_finetune"),
             "embedding_finetune": os.path.join(self.base_dir, "pipeline_4_embedding_finetune"),
         }
@@ -26,9 +28,10 @@ class ResultHandler:
             os.makedirs(path, exist_ok=True)
         os.makedirs(self.logs_dir, exist_ok=True)
 
-    def save_result(self, job_id: str, pipeline_name: str, result_data: dict):
+    def save_result(self, job_id: str, pipeline_name: str, result_data: dict, custom_filename: str = None):
         """
         成功したジョブの結果を保存する。
+        custom_filenameが指定された場合、それを使用する。
 
         Args:
             job_id (str): ジョブID。
@@ -56,7 +59,7 @@ class ResultHandler:
                 self._log_event("ERROR", job_id, pipeline_name, f"結果のファイル書き込み中にエラー: {e}")
         else:
             # Markdownなど、ジョブごとに個別ファイルを作成する場合
-            filename = f"{job_id}{extension}"
+            filename = custom_filename if custom_filename else f"{job_id}{extension}"
             filepath = os.path.join(pipeline_dir, filename)
             try:
                 with open(filepath, "w", encoding="utf-8") as f:
