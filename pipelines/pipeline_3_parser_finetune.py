@@ -1,7 +1,15 @@
 import os
 import json
+from datetime import date
 from google import genai
 from schemas import PATIENT_INFO_EXTRACTION_GROUPS
+
+
+def json_serial(obj):
+    """JSON a-serializable objects handler."""
+    if isinstance(obj, date):
+        return obj.isoformat() # dateオブジェクトを "YYYY-MM-DD" 形式の文字列に変換
+    raise TypeError ("Type %s not serializable" % type(obj))
 
 # --- プロンプトテンプレート ---
 
@@ -52,7 +60,7 @@ def process_parser_finetune_data_generation(job_data: dict, gemini_api_key: str)
         persona_json=json.dumps(persona_data, ensure_ascii=False, indent=2),
         article_text=article_text[:4000],  # 論文の一部をコンテキストとして使用
     )
-    response_summary = client.models.generate_content(model="gemini-2.5-flash", contents=summary_prompt)
+    response_summary = client.models.generate_content(model="gemini-2.5-flash-lite", contents=summary_prompt)
     clinical_summary_text = response_summary.text
     print("    -> ステージ1: 完了")
 
@@ -89,8 +97,11 @@ def process_parser_finetune_data_generation(job_data: dict, gemini_api_key: str)
     final_record = {
         "messages": [
             {"role": "user", "content": clinical_summary_text},
-            {"role": "assistant", "content": json.dumps(full_extracted_data, ensure_ascii=False)},
+            {"role": "assistant", "content": json.dumps(full_extracted_data, ensure_ascii=False, default=json_serial)},
         ]
     }
 
-    return {"content": json.dumps(final_record, ensure_ascii=False), "extension": ".jsonl"}
+    return {
+        "content": json.dumps(final_record, ensure_ascii=False, default=json_serial),
+        "extension": ".jsonl"
+    }

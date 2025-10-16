@@ -1,6 +1,7 @@
 import os
 import time
 import requests
+import xml.etree.ElementTree as ET
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,10 +13,11 @@ class JStageClient:
     """
 
     def __init__(self):
-        self.request_interval = float(os.getenv("JSTAGE_REQUEST_INTERVAL", 1.5))
+        self.request_interval = float(os.getenv("JSTAGE_REQUEST_INTERVAL", 2.0))
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            'User-Agent': 'DatasetGenerator/1.0 (https://github.com/YouSayH/kcr_Rehab-Plan-Generator; mailto:your-email@example.com)'
         }
+        self.search_api_url = "https://api.jstage.jst.go.jp/search/article/"
         self.last_request_time = 0
 
     def _wait_for_interval(self):
@@ -65,8 +67,54 @@ class JStageClient:
             print(f"[JStageClient] ダウンロード中にエラーが発生しました: {e}")
             return None, None
 
-    # J-STAGE APIを使った論文検索機能（ハブPC側で将来的に使用）
     def search_articles(self, keyword: str, count: int = 10) -> list:
-        # TODO: 仕様書に基づき、J-STAGEの論文検索APIを叩く処理を実装
-        print(f"[JStageClient] '{keyword}' で論文を検索する機能は未実装です。")
-        return []
+        """
+        J-STAGEの論文検索APIを叩き、論文メタデータのリストを返す。
+        """
+        self._wait_for_interval()
+        params = {
+            'searchword': keyword,
+            'count': count,
+            'service': 3 # 論文のみを対象
+        }
+        
+        print(f"[JStageClient] APIで論文を検索中: '{keyword}'")
+        try:
+            response = requests.get(self.search_api_url, params=params, headers=self.headers, timeout=30)
+            response.raise_for_status()
+
+            # XMLを解析
+            root = ET.fromstring(response.content)
+            articles = []
+            
+            # 名前空間を定義（J-STAGE APIの仕様）
+            ns = {
+                'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+                'prism': 'http://prismstandard.org/namespaces/basic/2.0/',
+                'dc': 'http://purl.org/dc/elements/1.1/'
+            }
+            
+            for item in root.findall('.//rdf:Description', ns):
+                title = item.find('dc:title', ns).text if item.find('dc:title', ns) is not None else "N/A"
+                doi = item.find('prism:doi', ns).text if item.find('prism:doi', ns) is not None else None
+                html_url = item.get('{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about')
+                
+                # J-STAGEの慣例に従い、HTML URLからPDF URLを推測する
+                pdf_url = html_url.replace('/_article/', '/_pdf/').replace('-char/ja', '') if html_url else None
+                
+                process_url = pdf_url if pdf_url else html_url
+
+                if doi and process_url:
+                    articles.append({
+                        'title': title, 'doi': doi, 'url': process_url,
+                    })
+            
+            print(f"  -> {len(articles)} 件の論文メタデータを取得しました。")
+            return articles
+
+        except requests.exceptions.RequestException as e:
+            print(f"[JStageClient] 論文検索APIへのリクエスト中にエラーが発生しました: {e}")
+            return []
+        except ET.ParseError as e:
+            print(f"[JStageClient] 論文検索APIの応答XMLの解析に失敗しました: {e}")
+            return []

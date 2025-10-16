@@ -7,24 +7,73 @@ from flask import Flask, request, jsonify, render_template_string
 from dotenv import load_dotenv
 from core.job_manager import JobManager
 from core.result_handler import ResultHandler
-from schemas import GENERATION_GROUPS
-
+from schemas import SEQUENTIAL_GENERATION_ORDER
+from utils.jstage_client import JStageClient
 
 # .envファイルから環境変数を読み込む
 load_dotenv()
 RAG_SOURCE_DIR = "output/pipeline_1_rag_source"
 PROCESSED_MARKDOWN_LOG = "output/processed_markdown.log"
+DEAD_LETTER_QUEUE_LOG = "output/logs/dead_letter_queue.jsonl"
 GENERATION_TARGETS = [
     {"age_group": "70代", "gender": "女性"},
-    {"age_group": "80代", "gender": "男性"},
-    {"age_group": "60代", "gender": "女性"},
+    # {"age_group": "80代", "gender": "男性"},
+    # {"age_group": "60代", "gender": "女性"},
 ]
+PROCESSED_JSTAGE_LOG = "output/processed_jstage_dois.log" # 新しいログファイル
+SEARCH_KEYWORDS = ["リハビリテーション", "理学療法", "作業療法"] # 検索キーワード
+SEARCH_INTERVAL_SECONDS = 3600 # 1時間に1回検索
 
 # アプリケーションの初期化
 app = Flask(__name__)
 job_manager = JobManager()
 result_handler = ResultHandler(base_output_dir="output")
+jstage_client = JStageClient()
 
+def jstage_search_monitor():
+    """
+    J-STAGE APIを定期的に検索し、新しい論文が見つかったら
+    パイプライン1のジョブを投入する。
+    """
+    print("[J-STAGE Monitor] 論文の自動検索を開始します...")
+    processed_dois = set()
+
+    try:
+        with open(PROCESSED_JSTAGE_LOG, 'r', encoding='utf-8') as f:
+            processed_dois = set(line.strip() for line in f)
+        print(f"[J-STAGE Monitor] {len(processed_dois)}件の処理済みDOIをログから読み込みました。")
+    except FileNotFoundError:
+        pass
+
+    while True:
+        print("\n" + "="*50)
+        print(f"[{time.ctime()}] 定期的な論文検索を実行します...")
+        
+        for keyword in SEARCH_KEYWORDS:
+            articles = jstage_client.search_articles(keyword, count=20) # 各キーワードで最大20件
+            
+            for article in articles:
+                doi = article.get('doi')
+                if doi not in processed_dois:
+                    print(f"[J-STAGE Monitor] 新規論文を発見: {article['title']}")
+                    
+                    job_data = {
+                        'pipeline': 'rag_source',
+                        'url': article['url'],
+                        'metadata': {
+                            'title': article['title'],
+                            'doi': article['doi']
+                        }
+                    }
+                    job_manager.add_job(job_data)
+                    
+                    processed_dois.add(doi)
+                    with open(PROCESSED_JSTAGE_LOG, 'a', encoding='utf-8') as f:
+                        f.write(doi + '\n')
+        
+        print(f"[{time.ctime()}] 論文検索完了。次の検索まで {SEARCH_INTERVAL_SECONDS / 60:.0f} 分待機します。")
+        print("="*50 + "\n")
+        time.sleep(SEARCH_INTERVAL_SECONDS)
 
 # パイプライン2ジョブ生成ロジック
 def extract_theme_from_markdown(filepath: str) -> str:
@@ -111,6 +160,22 @@ def markdown_folder_monitor():
 
         time.sleep(30)  # 30秒ごとにチェック
 
+def get_failed_jobs():
+    """DLQログファイルを読み込み、失敗したジョブのリストを返す"""
+    failed_jobs = []
+    if not os.path.exists(DEAD_LETTER_QUEUE_LOG):
+        return failed_jobs
+    
+    with open(DEAD_LETTER_QUEUE_LOG, 'r', encoding='utf-8') as f:
+        for line in f:
+            try:
+                failed_jobs.append(json.loads(line))
+            except json.JSONDecodeError:
+                print(f"警告: DLQログの不正な行をスキップします: {line}")
+    
+    failed_jobs.reverse() # 新しいものを上に表示
+    return failed_jobs
+
 
 # APIエンドポイントの定義
 @app.route("/get-job", methods=["GET"])
@@ -128,8 +193,9 @@ def get_job():
 # 管理用UI
 @app.route("/", methods=["GET"])
 def dashboard():
-    """簡易的な管理ダッシュボードを表示する"""
+    """失敗ジョブ一覧と再実行機能を追加したダッシュボード"""
     stats = job_manager.get_stats()
+    failed_jobs = get_failed_jobs()
 
     html = """
     <!Doctype html>
@@ -149,7 +215,27 @@ def dashboard():
             .progress-bar-inner { height: 100%; background: #4caf50; transition: width 0.5s; text-align: center; color: white; line-height: 25px; }
         </style>
         <script>
-            setTimeout(() => { window.location.reload(); }, 5000);
+            setTimeout(() => { window.location.reload(); }, 10000); // 更新間隔を10秒に延長
+
+            function resubmitJob(jobContext) {
+                if (!confirm('このジョブを再実行しますか？')) {
+                    return;
+                }
+                fetch('/resubmit-job', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(jobContext)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message);
+                    window.location.reload();
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('再実行リクエストに失敗しました。');
+                });
+            }
         </script>
     </head>
     <body>
@@ -172,11 +258,52 @@ def dashboard():
             </div>
         </div>
         {% endif %}
+
+        <h2>失敗したジョブ (Dead Letter Queue)</h2>
+        {% if failed_jobs %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>発生日時</th>
+                        <th>パイプライン</th>
+                        <th>エラー内容</th>
+                        <th>アクション</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for job in failed_jobs %}
+                    <tr>
+                        <td>{{ job.timestamp }}</td>
+                        <td>{{ job.pipeline_name }}</td>
+                        <td><pre class="error-message">{{ job.error_info.message | tojson(indent=2) }}</pre></td>
+                        <td>
+                            <button onclick='resubmitJob({{ job.job_context_for_resubmit | tojson }})'>再実行</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p>失敗したジョブはありません。</p>
+        {% endif %}
     </body>
     </html>
     """
-    return render_template_string(html, stats=stats)
+    return render_template_string(html, stats=stats, failed_jobs=failed_jobs)
 
+
+@app.route('/resubmit-job', methods=['POST'])
+def resubmit_job():
+    """失敗したジョブのコンテキストを受け取り、再度キューに投入するAPI"""
+    job_context = request.json
+    if not job_context:
+        return jsonify({"message": "再実行するジョブのコンテキストがありません。"}), 400
+    
+    new_job_id = job_manager.add_job(job_context)
+    message = f"ジョブを新しいID '{new_job_id}' で再投入しました。"
+    print(f"[Hub] {message}")
+    
+    return jsonify({"message": message}), 200
 
 # @app.route("/submit-result", methods=["POST"])
 # def submit_result():
@@ -227,41 +354,39 @@ def dashboard():
 #     return jsonify({"message": "結果受理"}), 200
 
 
-@app.route("/submit-result", methods=["POST"])
+@app.route('/submit-result', methods=['POST'])
 def submit_result():
     submission = request.json
-    job_id = submission.get("job_id")
-    status = submission.get("status")
-    pipeline = submission.get("pipeline")
-    original_job_data = job_manager.jobs.get(job_id, {}).get("data", {})
+    job_id = submission.get('job_id')
+    status = submission.get('status')
+    pipeline = submission.get('pipeline')
+    original_job_data = job_manager.jobs.get(job_id, {}).get('data', {})
 
     if not all([job_id, status, pipeline]):
         return jsonify({"error": "job_id, status, pipelineは必須です"}), 400
 
-    if status == "completed":
-        result = submission.get("result", {})
-
-        # ファイル保存ロジックを共通化
-        # JSONLファイル以外は、ジョブIDをファイル名として保存
+    if status == 'completed':
+        result = submission.get('result', {})
+        
         custom_filename = None
-        if result.get("extension") != ".jsonl":
-            custom_filename = f"{job_id}{result.get('extension', '.txt')}"
+        if result.get('extension') != '.jsonl':
+             custom_filename = f"{job_id}{result.get('extension', '.txt')}"
         result_handler.save_result(job_id, pipeline, result, custom_filename=custom_filename)
+        
+        job_manager.update_job_status(job_id, 'completed')
 
-        job_manager.update_job_status(job_id, "completed")
-
-        # --- パイプライン連鎖ロジック ---
-        if pipeline == "persona_generation":
+        if pipeline == 'persona_generation':
             handle_persona_completion(original_job_data, custom_filename)
-
-        elif pipeline == "lora_data_generation":
+        
+        elif pipeline == 'lora_data_generation':
             handle_lora_step_completion(original_job_data, result)
 
-    elif status == "failed":
-        error_info = submission.get("error", {})
-        result_handler.save_error(job_id, pipeline, error_info)
-        job_manager.update_job_status(job_id, "failed", message=error_info.get("message"))
 
+    elif status == 'failed':
+        error_info = submission.get('error', {})
+        result_handler.save_error(job_id, pipeline, error_info, original_job_data)
+        job_manager.update_job_status(job_id, 'failed', message=error_info.get('message'))
+    
     return jsonify({"message": "結果受理"}), 200
 
 
@@ -285,59 +410,58 @@ def submit_result():
 
 def handle_persona_completion(original_job_data, saved_persona_filename):
     """ペルソナ生成が完了した後の処理"""
-    source_markdown = original_job_data.get("source_markdown")
+    source_markdown = original_job_data.get('source_markdown')
     if not source_markdown or not saved_persona_filename:
-        print("[Hub] 警告: 次のステップのジョブ作成に必要な情報が不足しています。")
+        print(f"[Hub] 警告: 次のステップのジョブ作成に必要な情報が不足しています。")
         return
 
-    # --- 1. LoRAデータ生成の最初のステップを開始 ---
-    print("[Hub] ペルソナ生成完了。LoRAデータ生成の最初のステップを開始します。")
+    # --- LoRAデータ生成の最初のステップ(0番目)を開始 ---
+    print(f"[Hub] ペルソナ生成完了。LoRAデータ生成の最初のステップを開始します。")
     lora_job_data = {
-        "pipeline": "lora_data_generation",
-        "source_markdown": source_markdown,
-        "source_persona": saved_persona_filename,
-        "target_step": 0,
-        "previous_results": {},
+        'pipeline': 'lora_data_generation',
+        'source_markdown': source_markdown,
+        'source_persona': saved_persona_filename,
+        'target_step': 0, # 設計図の0番目からスタート
+        'previous_results': {},
     }
     job_manager.add_job(lora_job_data)
 
-    # --- 2. 情報抽出(Parser)用データ生成ジョブも開始 ---
-    print("[Hub] 同時に、情報抽出(Parser)用データ生成ジョブも開始します。")
+    # --- 情報抽出(Parser)用データ生成ジョブも並行して開始 ---
+    print(f"[Hub] 同時に、情報抽出(Parser)用データ生成ジョブも開始します。")
     parser_job_data = {
-        "pipeline": "parser_finetune",
-        "source_markdown": source_markdown,
-        "source_persona": saved_persona_filename,
+        'pipeline': 'parser_finetune',
+        'source_markdown': source_markdown,
+        'source_persona': saved_persona_filename,
     }
     job_manager.add_job(parser_job_data)
 
 
 def handle_lora_step_completion(original_job_data, worker_result):
-    """LoRAデータ生成の1ステップが完了した後の処理"""
-    next_step_data = worker_result.get("next_step_data", {})
-    next_step = next_step_data.get("next_step")
+    """【新版】LoRAデータ生成の1項目が完了した後の処理"""
+    next_step_data = worker_result.get('next_step_data', {})
+    next_step = next_step_data.get('next_step')
 
-    # 次のステップが存在するかどうかを確認
-    if next_step is not None and next_step < len(GENERATION_GROUPS):
+    # 設計図(SEQUENTIAL_GENERATION_ORDER)の最後まで到達したかチェック
+    if next_step is not None and next_step < len(SEQUENTIAL_GENERATION_ORDER):
         print(f"[Hub] LoRAステップ {next_step - 1} 完了。次のステップ {next_step} のジョブを作成します。")
-
-        # これまでの生成結果を統合する
-        all_previous_results = original_job_data.get("previous_results", {})
-        newly_generated_items = next_step_data.get("generated_items", {})
+        
+        # これまでの生成結果をすべて引き継ぐ
+        all_previous_results = original_job_data.get('previous_results', {})
+        newly_generated_items = next_step_data.get('generated_items', {})
         all_previous_results.update(newly_generated_items)
 
         # 次のステップのジョブを作成
         next_lora_job_data = {
-            "pipeline": "lora_data_generation",
-            "source_markdown": original_job_data.get("source_markdown"),
-            "source_persona": original_job_data.get("source_persona"),
-            "target_step": next_step,
-            "previous_results": all_previous_results,  # 統合した結果を渡す
+            'pipeline': 'lora_data_generation',
+            'source_markdown': original_job_data.get('source_markdown'),
+            'source_persona': original_job_data.get('source_persona'),
+            'target_step': next_step,
+            'previous_results': all_previous_results,
         }
         job_manager.add_job(next_lora_job_data)
     else:
-        print(
-            f"[Hub] LoRA逐次生成がすべて完了しました。 (Source: {original_job_data.get('source_markdown')}, Persona: {original_job_data.get('source_persona')})"
-        )
+        # 全項目が完了
+        print(f"[Hub] ★★★ LoRA 全項目({len(SEQUENTIAL_GENERATION_ORDER)}件)の逐次生成が完了しました。 ★★★ (Source: {original_job_data.get('source_markdown')})")
 
 
 # サーバーの起動
@@ -346,7 +470,10 @@ if __name__ == "__main__":
     port = int(os.getenv("HUB_PORT", 5000))
 
     # フォルダ監視スレッドをバックグラウンドで開始
-    monitor_thread = threading.Thread(target=markdown_folder_monitor, daemon=True)
-    monitor_thread.start()
+    md_monitor = threading.Thread(target=markdown_folder_monitor, daemon=True)
+    md_monitor.start()
+
+    jstage_monitor = threading.Thread(target=jstage_search_monitor, daemon=True)
+    jstage_monitor.start()
 
     app.run(host=host, port=port, debug=False)

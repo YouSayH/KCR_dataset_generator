@@ -68,21 +68,42 @@ class ResultHandler:
             except Exception as e:
                 self._log_event("ERROR", job_id, pipeline_name, f"結果のファイル書き込み中にエラー: {e}")
 
-    def save_error(self, job_id: str, pipeline_name: str, error_info: dict):
+    # def save_error(self, job_id: str, pipeline_name: str, error_info: dict):
+    #     """
+    #     失敗したジョブの情報をログに記録する。
+    #     仕様書のデッドレターキュー（DLQ）の簡易的な実装。
+    #     """
+    #     error_log_path = os.path.join(self.logs_dir, "dead_letter_queue.jsonl")
+    #     log_entry = {
+    #         "timestamp": datetime.now().isoformat(),
+    #         "job_id": job_id,
+    #         "pipeline_name": pipeline_name,
+    #         "error_info": error_info,
+    #     }
+    #     with open(error_log_path, "a", encoding="utf-8") as f:
+    #         f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+    #     self._log_event("FAILURE", job_id, pipeline_name, f"エラー情報を {error_log_path} に記録しました。")
+
+    def save_error(self, job_id: str, pipeline_name: str, error_info: dict, original_job_data: dict = None):
         """
         失敗したジョブの情報をログに記録する。
-        仕様書のデッドレターキュー（DLQ）の簡易的な実装。
+        【新機能】再実行できるよう、元のジョブデータも一緒に保存する。
         """
         error_log_path = os.path.join(self.logs_dir, "dead_letter_queue.jsonl")
+        
         log_entry = {
             "timestamp": datetime.now().isoformat(),
-            "job_id": job_id,
+            "failed_job_id": job_id, # どのジョブが失敗したか
             "pipeline_name": pipeline_name,
             "error_info": error_info,
+            "job_context_for_resubmit": original_job_data # ★再実行用のコンテキスト
         }
+        
         with open(error_log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
-        self._log_event("FAILURE", job_id, pipeline_name, f"エラー情報を {error_log_path} に記録しました。")
+            # default=str は、datetimeオブジェクトなどが含まれていてもエラーにならないようにする安全策
+            f.write(json.dumps(log_entry, ensure_ascii=False, default=str) + "\n")
+            
+        self._log_event("FAILURE", job_id, pipeline_name, f"エラー情報と再実行コンテキストを {error_log_path} に記録しました。")
 
     def _log_event(self, level, job_id, pipeline, message):
         """コンソールとファイルにイベントを記録する（簡易版）"""

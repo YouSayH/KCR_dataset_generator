@@ -1248,3 +1248,39 @@ PATIENT_INFO_EXTRACTION_GROUPS = [
     PatientInfo_Goal_HumanFactors,
     # 今後の拡張のために他のグループもここに追加可能
 ]
+
+
+# SLMに項目ごとの逐次生成のための順序リスト
+# 各要素は (フィールド名, それが含まれるPydanticクラス) のタプル
+# このリストの順序が、AIが計画書を思考する順序を決定する
+SEQUENTIAL_GENERATION_ORDER = [
+    # ステップ1: 現状評価
+    ('main_risks_txt', RisksAndPrecautions),
+    ('main_contraindications_txt', RisksAndPrecautions),
+    ('func_pain_txt', FunctionalLimitations),
+    ('func_rom_limitation_txt', FunctionalLimitations),
+    ('func_muscle_weakness_txt', FunctionalLimitations),
+    ('func_swallowing_disorder_txt', FunctionalLimitations),
+    ('func_behavioral_psychiatric_disorder_txt', FunctionalLimitations),
+    ('func_nutritional_disorder_txt', FunctionalLimitations),
+    ('func_excretory_disorder_txt', FunctionalLimitations),
+    ('func_pressure_ulcer_txt', FunctionalLimitations),
+    ('func_contracture_deformity_txt', FunctionalLimitations),
+    ('func_motor_muscle_tone_abnormality_txt', FunctionalLimitations),
+    ('func_disorientation_txt', FunctionalLimitations),
+    ('func_memory_disorder_txt', FunctionalLimitations),
+    
+    # ステップ2: 目標設定
+    ('goals_1_month_txt', Goals),
+    ('goals_at_discharge_txt', Goals),
+    
+    # ステップ3: 包括的治療計画
+    ('policy_treatment_txt', TreatmentPolicy),
+    ('policy_content_txt', TreatmentPolicy),
+    ('adl_equipment_and_assistance_details_txt', TreatmentPolicy),
+    ('goal_a_action_plan_txt', ActionPlans),
+    ('goal_s_env_action_plan_txt', ActionPlans),
+    ('goal_p_action_plan_txt', ActionPlans),
+    ('goal_s_psychological_action_plan_txt', ActionPlans),
+    ('goal_s_3rd_party_action_plan_txt', ActionPlans),
+]

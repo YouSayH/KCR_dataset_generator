@@ -85,7 +85,7 @@ def process_pipeline_1(job_data: dict, gemini_api_key: str) -> dict:
     if not content or not content_type:
         raise ConnectionError(f"URLからのコンテンツダウンロードに失敗しました: {url}")
 
-    model_name = "gemini-2.5-flash"
+    model_name = "gemini-2.5-flash-lite"
 
     if "pdf" in content_type:
         # PDF処理フロー (インラインデータ)

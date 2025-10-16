@@ -56,7 +56,7 @@ def generate_persona(paper_theme: str, age_group: str, gender: str, gemini_api_k
 
     # 正しい作法でのAPIコール
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.5-flash-lite",
         contents=prompt,
         config={
             "response_mime_type": "application/json",
