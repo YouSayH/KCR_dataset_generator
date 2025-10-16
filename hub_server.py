@@ -2,10 +2,13 @@ import os
 import time
 import threading
 import re
+import json
 from flask import Flask, request, jsonify, render_template_string
 from dotenv import load_dotenv
 from core.job_manager import JobManager
 from core.result_handler import ResultHandler
+from schemas import GENERATION_GROUPS
+
 
 # .envファイルから環境変数を読み込む
 load_dotenv()
@@ -122,55 +125,6 @@ def get_job():
         return "", 204
 
 
-@app.route("/submit-result", methods=["POST"])
-def submit_result():
-    submission = request.json
-    job_id = submission.get("job_id")
-    status = submission.get("status")
-    pipeline = submission.get("pipeline")
-    original_job_data = job_manager.jobs.get(job_id, {}).get("data", {})
-
-    if not all([job_id, status, pipeline]):
-        return jsonify({"error": "job_id, status, pipelineは必須です"}), 400
-
-    if status == "completed":
-        result = submission.get("result", {})
-        # パイプライン2以降は、結果をファイルに保存するだけでなく、
-        # 次のステップのジョブを生成する必要があるかもしれない（将来実装）
-        saved_filename = f"{job_id}{result.get('extension', '.txt')}"
-        result_handler.save_result(job_id, pipeline, result, custom_filename=saved_filename)
-        job_manager.update_job_status(job_id, "completed")
-
-        # ここからが重要
-        # もし完了したのがペルソナ生成ジョブなら、次のLoRAデータ生成ジョブを作る
-        if pipeline == "persona_generation":
-            print(f"[Hub] ペルソナ生成完了({job_id})。次のLoRAデータ生成ジョブを作成します。")
-            # 元のジョブ情報から、どの論文とペルソナを組み合わせるかを知る
-            source_markdown = original_job_data.get("source_markdown")
-            generated_persona_file = saved_filename
-
-            if source_markdown and generated_persona_file:
-                # ここで仕様書通り、逐次生成のジョブを投入する
-                # まずは最初のステップ（CurrentAssessment）のジョブだけを投入
-                lora_job_data = {
-                    "pipeline": "lora_data_generation",
-                    "source_markdown": source_markdown,
-                    "source_persona": generated_persona_file,
-                    "target_step": 0,  # 生成グループのインデックス (0 = CurrentAssessment)
-                    "previous_results": {},  # 最初のステップなので空
-                }
-                job_manager.add_job(lora_job_data)
-            else:
-                print("[Hub] 警告: LoRAジョブの作成に必要な情報が不足しています。")
-
-    elif status == "failed":
-        error_info = submission.get("error", {})
-        result_handler.save_error(job_id, pipeline, error_info)
-        job_manager.update_job_status(job_id, "failed", message=error_info.get("message"))
-
-    return jsonify({"message": "結果受理"}), 200
-
-
 # 管理用UI
 @app.route("/", methods=["GET"])
 def dashboard():
@@ -222,6 +176,168 @@ def dashboard():
     </html>
     """
     return render_template_string(html, stats=stats)
+
+
+# @app.route("/submit-result", methods=["POST"])
+# def submit_result():
+#     submission = request.json
+#     job_id = submission.get("job_id")
+#     status = submission.get("status")
+#     pipeline = submission.get("pipeline")
+#     original_job_data = job_manager.jobs.get(job_id, {}).get("data", {})
+
+#     if not all([job_id, status, pipeline]):
+#         return jsonify({"error": "job_id, status, pipelineは必須です"}), 400
+
+#     if status == "completed":
+#         result = submission.get("result", {})
+#         # パイプライン2以降は、結果をファイルに保存するだけでなく、
+#         # 次のステップのジョブを生成する必要があるかもしれない（将来実装）
+#         saved_filename = f"{job_id}{result.get('extension', '.txt')}"
+#         result_handler.save_result(job_id, pipeline, result, custom_filename=saved_filename)
+#         job_manager.update_job_status(job_id, "completed")
+
+#         # ここからが重要
+#         # もし完了したのがペルソナ生成ジョブなら、次のLoRAデータ生成ジョブを作る
+#         if pipeline == "persona_generation":
+#             print(f"[Hub] ペルソナ生成完了({job_id})。次のLoRAデータ生成ジョブを作成します。")
+#             # 元のジョブ情報から、どの論文とペルソナを組み合わせるかを知る
+#             source_markdown = original_job_data.get("source_markdown")
+#             generated_persona_file = saved_filename
+
+#             if source_markdown and generated_persona_file:
+#                 # ここで仕様書通り、逐次生成のジョブを投入する
+#                 # まずは最初のステップ（CurrentAssessment）のジョブだけを投入
+#                 lora_job_data = {
+#                     "pipeline": "lora_data_generation",
+#                     "source_markdown": source_markdown,
+#                     "source_persona": generated_persona_file,
+#                     "target_step": 0,  # 生成グループのインデックス (0 = CurrentAssessment)
+#                     "previous_results": {},  # 最初のステップなので空
+#                 }
+#                 job_manager.add_job(lora_job_data)
+#             else:
+#                 print("[Hub] 警告: LoRAジョブの作成に必要な情報が不足しています。")
+
+#     elif status == "failed":
+#         error_info = submission.get("error", {})
+#         result_handler.save_error(job_id, pipeline, error_info)
+#         job_manager.update_job_status(job_id, "failed", message=error_info.get("message"))
+
+#     return jsonify({"message": "結果受理"}), 200
+
+
+@app.route("/submit-result", methods=["POST"])
+def submit_result():
+    submission = request.json
+    job_id = submission.get("job_id")
+    status = submission.get("status")
+    pipeline = submission.get("pipeline")
+    original_job_data = job_manager.jobs.get(job_id, {}).get("data", {})
+
+    if not all([job_id, status, pipeline]):
+        return jsonify({"error": "job_id, status, pipelineは必須です"}), 400
+
+    if status == "completed":
+        result = submission.get("result", {})
+
+        # ファイル保存ロジックを共通化
+        # JSONLファイル以外は、ジョブIDをファイル名として保存
+        custom_filename = None
+        if result.get("extension") != ".jsonl":
+            custom_filename = f"{job_id}{result.get('extension', '.txt')}"
+        result_handler.save_result(job_id, pipeline, result, custom_filename=custom_filename)
+
+        job_manager.update_job_status(job_id, "completed")
+
+        # --- パイプライン連鎖ロジック ---
+        if pipeline == "persona_generation":
+            handle_persona_completion(original_job_data, custom_filename)
+
+        elif pipeline == "lora_data_generation":
+            handle_lora_step_completion(original_job_data, result)
+
+    elif status == "failed":
+        error_info = submission.get("error", {})
+        result_handler.save_error(job_id, pipeline, error_info)
+        job_manager.update_job_status(job_id, "failed", message=error_info.get("message"))
+
+    return jsonify({"message": "結果受理"}), 200
+
+
+# def handle_persona_completion(original_job_data, saved_persona_filename):
+#     """ペルソナ生成が完了した後の処理"""
+#     print("[Hub] ペルソナ生成完了。LoRAデータ生成の最初のステップを開始します。")
+#     source_markdown = original_job_data.get("source_markdown")
+
+#     if source_markdown and saved_persona_filename:
+#         lora_job_data = {
+#             "pipeline": "lora_data_generation",
+#             "source_markdown": source_markdown,
+#             "source_persona": saved_persona_filename,
+#             "target_step": 0,
+#             "previous_results": {},
+#         }
+#         job_manager.add_job(lora_job_data)
+#     else:
+#         print("[Hub] 警告: LoRAジョブ作成に必要な情報が不足しています。")
+
+
+def handle_persona_completion(original_job_data, saved_persona_filename):
+    """ペルソナ生成が完了した後の処理"""
+    source_markdown = original_job_data.get("source_markdown")
+    if not source_markdown or not saved_persona_filename:
+        print("[Hub] 警告: 次のステップのジョブ作成に必要な情報が不足しています。")
+        return
+
+    # --- 1. LoRAデータ生成の最初のステップを開始 ---
+    print("[Hub] ペルソナ生成完了。LoRAデータ生成の最初のステップを開始します。")
+    lora_job_data = {
+        "pipeline": "lora_data_generation",
+        "source_markdown": source_markdown,
+        "source_persona": saved_persona_filename,
+        "target_step": 0,
+        "previous_results": {},
+    }
+    job_manager.add_job(lora_job_data)
+
+    # --- 2. 情報抽出(Parser)用データ生成ジョブも開始 ---
+    print("[Hub] 同時に、情報抽出(Parser)用データ生成ジョブも開始します。")
+    parser_job_data = {
+        "pipeline": "parser_finetune",
+        "source_markdown": source_markdown,
+        "source_persona": saved_persona_filename,
+    }
+    job_manager.add_job(parser_job_data)
+
+
+def handle_lora_step_completion(original_job_data, worker_result):
+    """LoRAデータ生成の1ステップが完了した後の処理"""
+    next_step_data = worker_result.get("next_step_data", {})
+    next_step = next_step_data.get("next_step")
+
+    # 次のステップが存在するかどうかを確認
+    if next_step is not None and next_step < len(GENERATION_GROUPS):
+        print(f"[Hub] LoRAステップ {next_step - 1} 完了。次のステップ {next_step} のジョブを作成します。")
+
+        # これまでの生成結果を統合する
+        all_previous_results = original_job_data.get("previous_results", {})
+        newly_generated_items = next_step_data.get("generated_items", {})
+        all_previous_results.update(newly_generated_items)
+
+        # 次のステップのジョブを作成
+        next_lora_job_data = {
+            "pipeline": "lora_data_generation",
+            "source_markdown": original_job_data.get("source_markdown"),
+            "source_persona": original_job_data.get("source_persona"),
+            "target_step": next_step,
+            "previous_results": all_previous_results,  # 統合した結果を渡す
+        }
+        job_manager.add_job(next_lora_job_data)
+    else:
+        print(
+            f"[Hub] LoRA逐次生成がすべて完了しました。 (Source: {original_job_data.get('source_markdown')}, Persona: {original_job_data.get('source_persona')})"
+        )
 
 
 # サーバーの起動

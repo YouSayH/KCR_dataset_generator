@@ -12,6 +12,7 @@ from pipelines.pipeline_1_rag_source import process_pipeline_1
 # from pipelines.pipeline_4_embedding_finetune import process_pipeline_4 # 将来追加
 from utils.persona_generator import generate_persona
 from pipelines.pipeline_2_lora_finetune import process_lora_data_generation
+from pipelines.pipeline_3_parser_finetune import process_parser_finetune_data_generation
 
 # .envファイルから環境変数を読み込む
 load_dotenv()
@@ -52,7 +53,8 @@ def dispatch_job(job_data: dict):
         return {"content": persona_obj.model_dump_json(indent=2, ensure_ascii=False), "extension": ".json"}
     elif pipeline == "lora_data_generation":
         return process_lora_data_generation(job_data, GEMINI_API_KEY)
-
+    elif pipeline == "parser_finetune":
+        return process_parser_finetune_data_generation(job_data, GEMINI_API_KEY)
     else:
         raise ValueError(f"'{pipeline}'は未定義のパイプラインです。")
 
