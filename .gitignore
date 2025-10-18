@@ -3,3 +3,7 @@ config.ini
 venv_dataset
 output
 __pycache__
+worker_outbox
+worker_assets
+worker_progress
+venv
