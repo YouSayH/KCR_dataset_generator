@@ -7,3 +7,4 @@ worker_outbox
 worker_assets
 worker_progress
 venv
+pipeline_1.log
