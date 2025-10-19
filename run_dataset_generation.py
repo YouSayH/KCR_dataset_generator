@@ -122,10 +122,29 @@ def run_p2_and_p3():
                 print(f"[実行中] {base_name}")
                 try:
                     print("  -> (1/3) ペルソナを生成中...")
+                    # --- ▼▼▼ Markdownファイルの内容を読み込む処理を追加 ▼▼▼ ---
+                    source_markdown_path = os.path.join(RAG_SOURCE_DIR, md_file) # Markdownファイルのフルパスを取得
+                    try:
+                        with open(source_markdown_path, 'r', encoding='utf-8') as f:
+                            # ファイル全体ではなく、最初の数千文字など、必要な部分だけを渡す
+                            # ここでは例として最初の4000文字を渡します
+                            paper_content_for_persona = f.read(4000)
+                    except FileNotFoundError:
+                        print(f"  -> !! エラー: Markdownファイルが見つかりません: {source_markdown_path}")
+                        paper_content_for_persona = "" # ファイルがない場合は空文字を渡す
+                    except Exception as read_e:
+                        print(f"  -> !! エラー: Markdownファイルの読み込み中にエラー: {read_e}")
+                        paper_content_for_persona = "" # 読み込み失敗時も空文字
+
+                    # --- ▲▲▲ Markdown読み込み追加ここまで ▲▲▲ ---
+
                     persona_obj = generate_persona(
-                        paper_theme=md_file.replace(".md", ""),  # テーマとしてファイル名を渡す
+                        paper_theme=md_file.replace(".md", ""),
                         age_group=target["age_group"],
                         gender=target["gender"],
+                        # --- ▼▼▼ 読み込んだ論文内容を引数として渡す ▼▼▼ ---
+                        paper_content=paper_content_for_persona,
+                        # --- ▲▲▲ 引数追加ここまで ▲▲▲ ---
                         gemini_api_key=gemini_api_key,
                     )
                     with open(persona_path, "w", encoding="utf-8") as f:
@@ -133,9 +152,9 @@ def run_p2_and_p3():
                     print(f"  -> (1/3) ペルソナを保存しました: {persona_filename}")
                 except Exception as e:
                     print(f"  -> !! エラー: {base_name} のペルソナ生成中に失敗。")
-                    print(f"     詳細: {e}")
+                    print(f"     詳細: {e}") # エラー詳細を表示（エラーメッセージ確認用）
                     print("     このジョブ（ペルソナ）をスキップして次に進みます。")
-                    continue  # このペルソナは処理できないので次のループへ
+                    continue
             else:
                 print(f"[チェック] {base_name} のペルソナは既に存在します。")
 

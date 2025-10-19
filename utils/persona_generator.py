@@ -31,27 +31,36 @@ PERSONA_GENERATION_PROMPT_TEMPLATE = """
 - **基本属性**: {age_group}, {gender}
 - **主要疾患**: {paper_theme}
 
+【関連論文の内容】
+{paper_content}
+
 【生成するプロファイルの要件】
 - **多様性のため、臨床的にあり得る合併症を1つか2つ程度あってもいい。合併症がなくてもいい。必須ではありません。**
-- 具体的な生活史や、その人らしさが伝わる背景（仕事、趣味など）を記述すること。
+- **毎回異なる職業、家族構成、趣味を持つように心がけてください。**そのうえで、具体的な生活史や、その人らしさが伝わる背景（仕事、趣味など）を記述すること。
+- **心理社会的因子も、不安、意欲、家族関係、社会的孤立など、様々な側面から記述してください。**
 - 患者が抱える具体的な悩みや、リハビリテーションを通じて達成したい希望を明確に記述すること。
 - 治療の妨げ、または促進になりうる心理・社会的因子を必ず1つ以上含めること。
 
 出力は、指定されたJSONスキーマに厳密に従ってください。
 """
 
-
-def generate_persona(paper_theme: str, age_group: str, gender: str, gemini_api_key: str) -> PatientPersona:
+def generate_persona(paper_theme: str, age_group: str, gender: str, paper_content: str, gemini_api_key: str) -> PatientPersona:
     """
     論文テーマと基本属性から、Geminiを使って患者ペルソナを生成する。
     """
     # 正しい作法でのクライアント初期化
     client = genai.Client(api_key=gemini_api_key)
 
-    prompt = PERSONA_GENERATION_PROMPT_TEMPLATE.format(paper_theme=paper_theme, age_group=age_group, gender=gender)
+    prompt = PERSONA_GENERATION_PROMPT_TEMPLATE.format(
+            paper_theme=paper_theme,
+            age_group=age_group,
+            gender=gender,
+            paper_content=paper_content # 論文内容を渡す
+        )
 
     print("\n～～～ ペルソナ生成リクエスト ～～～")
     print(f"テーマ: {paper_theme}, 属性: {age_group} {gender}")
+    print(f"関連論文(冒頭):\n{paper_content[:200]}...") # ログにも一部表示
     print("～～～～～～～～～～～～～～～～～～")
 
     # 正しい作法でのAPIコール
@@ -61,6 +70,7 @@ def generate_persona(paper_theme: str, age_group: str, gender: str, gemini_api_k
         config={
             "response_mime_type": "application/json",
             "response_schema": PatientPersona,
+            "temperature":1.5
         },
     )
 
