@@ -8,6 +8,19 @@ from dotenv import load_dotenv
 DEFAULT_SEARCH_COUNT_PER_KEYWORD = 10
 DEFAULT_MAX_QUERIES = 5000
 
+# search_keywords.py のリスト名と、引数で使う短い名前を対応させる
+KEYWORD_LIST_MAP = {
+    "m": "MAIN_DISEASE_KEYWORDS",
+    "s": "SURGERY_PROCEDURE_KEYWORDS",
+    "c": "COMPLICATION_SEQUELAE_KEYWORDS",
+    "ph": "PHASE_KEYWORDS",
+    "po": "PATIENT_POPULATION_KEYWORDS",
+    "g": "GOAL_KEYWORDS",
+    "e": "EVALUATION_KEYWORDS",
+    "t": "REHAB_TECHNIQUE_KEYWORDS",
+    "mo": "REHAB_MODALITY_KEYWORDS",
+}
+
 
 def check_api_key():
     """GEMINI_API_KEYが設定されているか確認"""
@@ -43,6 +56,34 @@ def main():
         help=f"1回の実行で処理する最大クエリ数 (デフォルト: {DEFAULT_MAX_QUERIES})",
     )
 
+    parser_p1.add_argument(
+        "--query-mode",
+        type=str,
+        default="single",
+        choices=["single", "combination"],
+        help=(
+            "検索クエリの生成モードを選択 (default: single)。"
+            "'single': --keyword-lists で指定されたリストの単一キーワードのみ（安全・推奨）。"
+            "'combination': 全リストのキーワードを総当たりで組み合わせる（非推奨・IPブロックのリスク有）。"
+        ),
+    )
+    parser_p1.add_argument(
+        "--keyword-lists",
+        nargs="+",  # 1つ以上の引数をリストとして受け取る
+        default=["m", "s"],
+        choices=["all"] + list(KEYWORD_LIST_MAP.keys()),
+        help=(
+            f"singleモード時に使用するキーワードリスト (default: m s)。"
+            f"'all' ですべてのリストを選択可能。選択肢: {list(KEYWORD_LIST_MAP.keys())}"
+        ),
+    )
+
+    parser_p1.add_argument(
+        "--resume",
+        action="store_true",  # この引数が指定されると True になる
+        help="中断した箇所から処理を再開します。'output/pipeline_1_processed_keywords.log' を参照します。"
+    )
+
     # 4. "p234" コマンドのパーサーを作成
     subparsers.add_parser("p234", help="既存のMarkdownから各種データセット(P2, P3, P4)を生成する")
 
@@ -60,7 +101,7 @@ def main():
 
             # main(args) の代わりに、リネームした run(args) を呼び出す
             # argparse が解析した args オブジェクトをそのまま渡す
-            run_pipeline_1_rag_source.run(args)
+            run_pipeline_1_rag_source.run(args, KEYWORD_LIST_MAP) # 第2引数を追加
         except ImportError:
             print("エラー: run_pipeline_1_rag_source.py が見つかりません。")
         except Exception as e:

@@ -1,6 +1,6 @@
 import os
 import time
-import itertools
+import itertools # <-- この行は combination モードでのみ使用
 import logging
 import random
 # 削除: import argparse
@@ -52,44 +52,76 @@ def log_processed_doi(log_path: str, doi: str):
         f.write(doi + "\n")
 
 
-def generate_search_queries() -> set:
+# --- ▼▼▼ ここから関数全体を修正 ▼▼▼ ---
+def generate_search_queries(args, keyword_list_map) -> set:
     """
-    キーワードリストを組み合わせて検索クエリのセットを生成する
+    コマンドライン引数 (args) に基づいて、検索クエリのセットを生成する
     """
     logger.info("[P1] 検索クエリを生成中...")
     queries = set()
 
-    # === 1. "アンカー"となる単体キーワードの追加 ===
-    logger.info("[P1] ... (1/4) 疾患・術式名の単体キーワードを追加中")
-    queries.update(kw.MAIN_DISEASE_KEYWORDS)
-    queries.update(kw.SURGERY_PROCEDURE_KEYWORDS)
+    # --- モード1: 単一キーワード（推奨） ---
+    if args.query_mode == 'single':
+        logger.info(f"[P1] 'single' モードで実行。対象リスト: {args.keyword_lists}")
+        
+        # 'all' が指定された場合、全リストを対象にする
+        target_list_names = []
+        if 'all' in args.keyword_lists:
+            target_list_names = list(keyword_list_map.keys())
+            logger.info("[P1] ... 'all' が指定されたため、すべてのキーワードリストを使用します。")
+        else:
+            target_list_names = args.keyword_lists
 
-    # === 2. "アンカー" x "モディファイア" の組み合わせ (AND検索) ===
-    logger.info("[P1] ... (2/4) [アンカー] x [モディファイア] の組み合わせを生成中")
+        # `search_keywords.py` (kw) から動的にリストを取得して追加
+        for short_name in target_list_names:
+            list_variable_name = keyword_list_map.get(short_name)
+            if list_variable_name:
+                keyword_list = getattr(kw, list_variable_name, [])
+                queries.update(keyword_list)
+                logger.info(f"[P1] ... '{list_variable_name}' から {len(keyword_list)} 件のキーワードを追加。")
+            else:
+                logger.warning(f"[P1] ... 不明なリスト名: {short_name}")
 
-    anchor_lists = [kw.MAIN_DISEASE_KEYWORDS, kw.SURGERY_PROCEDURE_KEYWORDS]
-    modifier_lists = [
-        kw.COMPLICATION_SEQUELAE_KEYWORDS,
-        kw.PHASE_KEYWORDS,
-        kw.PATIENT_POPULATION_KEYWORDS,
-        kw.GOAL_KEYWORDS,
-        kw.EVALUATION_KEYWORDS,
-        kw.REHAB_TECHNIQUE_KEYWORDS,
-        kw.REHAB_MODALITY_KEYWORDS,
-    ]
+    # --- モード2: 組み合わせ（非推奨） ---
+    elif args.query_mode == 'combination':
+        logger.warning("*" * 60)
+        logger.warning("[P1] 警告: 'combination' モードで実行します。")
+        logger.warning("[P1] このモードは無関係なクエリを大量生成し、IPブロックのリスクがあります。")
+        logger.warning("*" * 60)
 
-    for anchor_list in anchor_lists:
-        for modifier_list in modifier_lists:
-            for combo in itertools.product(anchor_list, modifier_list):
-                queries.add(f"{combo[0]} {combo[1]}")  # J-Stageはスペース区切りでAND検索
+        # === 1. "アンカー"となる単体キーワードの追加 ===
+        logger.info("[P1] ... (1/4) 疾患・術式名の単体キーワードを追加中")
+        queries.update(kw.MAIN_DISEASE_KEYWORDS)
+        queries.update(kw.SURGERY_PROCEDURE_KEYWORDS)
 
-    # === 3. "メイン疾病" x "メイン疾病" の組み合わせ ===
-    logger.info("[P1] ... (3/4) [メイン疾病] x [メイン疾病] の組み合わせ（併発）を生成中")
-    for combo in itertools.combinations(kw.MAIN_DISEASE_KEYWORDS, 2):
-        queries.add(f"{combo[0]} {combo[1]}")
+        # === 2. "アンカー" x "モディファイア" の組み合わせ (AND検索) ===
+        logger.info("[P1] ... (2/4) [アンカー] x [モディファイア] の組み合わせを生成中")
+        anchor_lists = [kw.MAIN_DISEASE_KEYWORDS, kw.SURGERY_PROCEDURE_KEYWORDS]
+        modifier_lists = [
+            kw.COMPLICATION_SEQUELAE_KEYWORDS,
+            kw.PHASE_KEYWORDS,
+            kw.PATIENT_POPULATION_KEYWORDS,
+            kw.GOAL_KEYWORDS,
+            kw.EVALUATION_KEYWORDS,
+            kw.REHAB_TECHNIQUE_KEYWORDS,
+            kw.REHAB_MODALITY_KEYWORDS,
+        ]
+        for anchor_list in anchor_lists:
+            for modifier_list in modifier_lists:
+                for combo in itertools.product(anchor_list, modifier_list):
+                    queries.add(f"{combo[0]} {combo[1]}")
 
-    logger.info(f"[P1] ... (4/4) クエリのユニーク化完了。合計 {len(queries)} 件のクエリを生成しました。")
+        # === 3. "メイン疾病" x "メイン疾病" の組み合わせ ===
+        logger.info("[P1] ... (3/4) [メイン疾病] x [メイン疾病] の組み合わせ（併発）を生成中")
+        for combo in itertools.combinations(kw.MAIN_DISEASE_KEYWORDS, 2):
+            queries.add(f"{combo[0]} {combo[1]}")
+        
+        logger.info("[P1] ... (4/4) 組み合わせクエリの生成完了。")
+
+    logger.info(f"[P1] クエリのユニーク化完了。合計 {len(queries)} 件のクエリを生成しました。")
     return queries
+
+# --- ▲▲▲ ここまで関数全体を修正 ▲▲▲ ---
 
 
 def run_search_loop(
@@ -175,7 +207,7 @@ def run_search_loop(
     return new_files_created
 
 
-def run(args):
+def run(args, keyword_list_map): # <-- 引数を追加
     """
     パイプライン1（RAGソース生成）を実行します。
     main.py から呼び出されることを前提とします。
@@ -196,17 +228,23 @@ def run(args):
 
     processed_dois = load_processed_dois(PROCESSED_JSTAGE_LOG)
 
-    all_queries = generate_search_queries()
+    all_queries = generate_search_queries(args, keyword_list_map) # <-- 引数を渡す
     all_queries_list = list(all_queries)
     random.shuffle(all_queries_list)
 
     # --- 引数の取得元を args オブジェクトに変更 ---
     max_queries = args.max_queries
-    if len(all_queries_list) < max_queries:
+    
+    # max_queries が総クエリ数より多い場合は、総クエリ数に丸める
+    if max_queries <= 0 or len(all_queries_list) < max_queries:
         max_queries = len(all_queries_list)
-        logger.info(f"生成クエリ総数が --max-queries 未満のため、全 {max_queries} 件のクエリを実行します。")
+        if len(all_queries_list) == 0:
+            logger.error("[P1] 実行対象の検索クエリが0件です。処理を終了します。")
+            return
+        logger.info(f"生成クエリ総数が --max-queries 未満（または設定が不正）のため、全 {max_queries} 件のクエリを実行します。")
     else:
         logger.info(f"全 {len(all_queries_list)} 件のクエリから {max_queries} 件をランダムにサンプリングして実行します。")
+
 
     queries_to_run = all_queries_list[:max_queries]
 
