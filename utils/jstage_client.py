@@ -3,7 +3,11 @@ import time
 import requests
 import xml.etree.ElementTree as ET
 from dotenv import load_dotenv
-import urllib.parse
+
+# --- リトライ機能のために追加 ---
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+# ------------------------------
 
 load_dotenv()
 
@@ -11,15 +15,34 @@ load_dotenv()
 class JStageClient:
     """
     J-STAGEからの論文ダウンロードを管理するクライアント。
+    自動リトライ機能（エクスポネンシャル・バックオフ）を実装。
     """
 
     def __init__(self):
         self.request_interval = float(os.getenv("JSTAGE_REQUEST_INTERVAL", 1.5))
         self.headers = {
-            'User-Agent': 'DatasetGenerator/1.0 (https://github.com/YouSayH/kcr_Rehab-Plan-Generator; mailto:your-email@example.com)'
+            "User-Agent": "DatasetGenerator/1.0 (https://github.com/YouSayH/kcr_Rehab-Plan-Generator; mailto:your-email@example.com)"
         }
         self.base_url = "https://api.jstage.jst.go.jp/searchapi/do"
         self.last_request_time = 0
+
+        # --- ★ BAN対策：リトライ戦略の定義 ---
+        retry_strategy = Retry(
+            total=3,  # 合計リトライ回数
+            status_forcelist=[429, 500, 502, 503, 504],  # リトライするHTTPステータスコード
+            backoff_factor=1,  # バックオフ係数 (待機時間 = {backoff_factor} * (2 ** ({リトライ回数} - 1)))
+            # 1回目: 0s, 2回目: 2s, 3回目: 4s
+            allowed_methods=["HEAD", "GET", "OPTIONS"],  # リトライを許可するメソッド
+        )
+
+        # --- ★ BAN対策：セッションの構築 ---
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session = requests.Session()  # requests.get() の代わりにセッションオブジェクトを使う
+
+        # httpとhttpsの両方にアダプタとヘッダーを適用
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+        self.session.headers.update(self.headers)  # デフォルトヘッダーをセッションに設定
 
     def _wait_for_interval(self):
         """
@@ -28,6 +51,7 @@ class JStageClient:
         elapsed_time = time.time() - self.last_request_time
         wait_time = self.request_interval - elapsed_time
         if wait_time > 0:
+            print(f"    -> (待機: {wait_time:.2f}秒)")
             time.sleep(wait_time)
         self.last_request_time = time.time()
 
@@ -38,7 +62,8 @@ class JStageClient:
         self._wait_for_interval()
         try:
             print(f"[JStageClient] URLからコンテンツをダウンロード中: {url}")
-            response = requests.get(url, headers=self.headers, timeout=30, allow_redirects=True)
+            # ★ requests.get() -> self.session.get() に変更
+            response = self.session.get(url, timeout=30, allow_redirects=True)
             response.raise_for_status()
             content_type = response.headers.get("Content-Type", "").lower()
 
@@ -57,58 +82,74 @@ class JStageClient:
 
     def search_articles(self, keyword: str, count: int = 10) -> list:
         """
-        J-STAGEの論文検索APIを叩き、論文メタデータのリストを返す。（最終修正版）
+        J-STAGEの論文検索APIを叩き、論文メタデータのリストを返す。
         """
         self._wait_for_interval()
-        
-        # ★★★ 修正点: URLを手動で構築 ★★★
-        # 共有いただいた記事の通り、'text'パラメータを使い、キーワードをURLエンコードして結合します。
-        encoded_keyword = urllib.parse.quote(f'"{keyword}"')
-        request_url = f"{self.base_url}?service=3&text={encoded_keyword}&count={count}"
-        
-        print(f"[JStageClient] APIで論文を検索中: '{keyword}'")
+
+        params = {"service": "3", "keyword": keyword, "count": count}
+
+        print(f"[JStageClient] APIで論文を検索中 (keyword): '{keyword}'")
         try:
-            # params引数を使わず、構築したURLを直接渡します
-            response = requests.get(request_url, headers=self.headers, timeout=30)
+            # ★ requests.get() -> self.session.get() に変更
+            response = self.session.get(self.base_url, params=params, timeout=30)
             response.raise_for_status()
             response.encoding = response.apparent_encoding
 
             root = ET.fromstring(response.content)
-            
+
             ns = {
-                'atom': 'http://www.w3.org/2005/Atom',
-                'prism': 'http://prismstandard.org/namespaces/basic/2.0/'
+                "atom": "http://www.w3.org/2005/Atom",
+                "prism": "http://www.w3.org/2005/Atom",  # 修正：prismのURIをマニュアル通りに
+                "prism": "http://prismstandard.org/namespaces/basic/2.0/",
             }
 
             articles = []
-            for entry in root.findall('atom:entry', ns):
-                title_elem = entry.find('atom:title', ns)
-                title = title_elem.text if title_elem is not None else "N/A"
-                
-                doi_elem = entry.find('prism:doi', ns)
+            for entry in root.findall("atom:entry", ns):
+                # 論文タイトル (日本語) の正しいパス
+                title_elem = entry.find(".//atom:article_title/atom:ja", ns)
+                if title_elem is None:
+                    title_elem = entry.find(".//atom:article_title/atom:en", ns)
+                if title_elem is None:
+                    title_elem = entry.find("atom:title", ns)
+
+                title = title_elem.text.strip() if title_elem is not None and title_elem.text else "N/A"
+
+                doi_elem = entry.find("prism:doi", ns)
                 doi = doi_elem.text if doi_elem is not None else None
-                
-                # 'text/html'タイプのリンクを取得
-                link_elem = entry.find('atom:link[@type="text/html"]', ns)
-                if link_elem is None:
-                    # 見つからない場合はタイプ指定なしで探す
-                    link_elem = entry.find('atom:link', ns)
-                
-                link_url = link_elem.get('href') if link_elem is not None else None
+
+                # PDFリンクを優先して検索
+                link_url = None
+                pdf_link_elem = entry.find('atom:link[@type="application/pdf"]', ns)
+                if pdf_link_elem is not None:
+                    link_url = pdf_link_elem.get("href")
+
+                if link_url is None:
+                    html_link_elem = entry.find('atom:link[@type="text/html"]', ns)
+                    if html_link_elem is not None:
+                        html_url = html_link_elem.get("href")
+                        if html_url:
+                            link_url = html_url.replace("/_article/", "/_pdf/").replace("-char/ja", "")
+
+                if link_url is None:
+                    fallback_link_elem = entry.find("atom:link", ns)
+                    if fallback_link_elem is not None:
+                        link_url = fallback_link_elem.get("href")
 
                 if doi and link_url:
-                    pdf_url = link_url.replace('/_article/', '/_pdf/').replace('-char/ja', '')
-                    articles.append({
-                        'title': title,
-                        'doi': doi,
-                        'url': pdf_url,
-                    })
-            
+                    articles.append(
+                        {
+                            "title": title,
+                            "doi": doi,
+                            "url": link_url,
+                        }
+                    )
+
             print(f"  -> {len(articles)} 件の論文メタデータを取得しました。")
             return articles
 
         except requests.exceptions.RequestException as e:
-            print(f"[JStageClient] 論文検索APIへのリクエスト中にエラーが発生しました: {e}")
+            # リトライしても失敗した場合
+            print(f"[JStageClient] 論文検索APIへのリクエスト中にエラーが発生しました（リトライ後）: {e}")
             return []
         except ET.ParseError as e:
             print(f"[JStageClient] 論文検索APIの応答XMLの解析に失敗しました: {e}")
