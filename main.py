@@ -1,13 +1,12 @@
-# main.py (エラー修正後)
 import sys
 import os
 import argparse  # argparse をインポート
 from dotenv import load_dotenv
 
 # 定義を run_pipeline_1_rag_source.py から移動
-DEFAULT_SEARCH_COUNT_PER_KEYWORD = 500 # 実験用に20のまま
+DEFAULT_SEARCH_COUNT_PER_KEYWORD = 1000 # 実験用に20のまま
 DEFAULT_MAX_QUERIES = 5000
-DEFAULT_MAX_PAPERS_PER_KEYWORD = 500 # 実験用に20のまま
+DEFAULT_MAX_PAPERS_PER_KEYWORD = 1000 # 実験用に20のまま
 
 # search_keywords.py のリスト名と、引数で使う短い名前を対応させる
 KEYWORD_LIST_MAP = {
