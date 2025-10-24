@@ -1,12 +1,13 @@
-# main.py (リファクタリング後)
+# main.py (エラー修正後)
 import sys
 import os
 import argparse  # argparse をインポート
 from dotenv import load_dotenv
 
-# --- 定義を run_pipeline_1_rag_source.py から移動 ---
-DEFAULT_SEARCH_COUNT_PER_KEYWORD = 10
+# 定義を run_pipeline_1_rag_source.py から移動
+DEFAULT_SEARCH_COUNT_PER_KEYWORD = 500 # 実験用に20のまま
 DEFAULT_MAX_QUERIES = 5000
+DEFAULT_MAX_PAPERS_PER_KEYWORD = 500 # 実験用に20のまま
 
 # search_keywords.py のリスト名と、引数で使う短い名前を対応させる
 KEYWORD_LIST_MAP = {
@@ -41,14 +42,21 @@ def main():
     # 2. サブコマンド（サブパーサー）を追加
     subparsers = parser.add_subparsers(dest="command", required=True, help="実行するコマンド")
 
-    # 3. "p1" コマンドのパーサーを作成
+    # 3. "p1" コンドのパーサーを作成
     parser_p1 = subparsers.add_parser("p1", help="論文を収集し、RAG用Markdownを生成する")
     parser_p1.add_argument(
         "--count",
         type=int,
         default=DEFAULT_SEARCH_COUNT_PER_KEYWORD,
-        help=f"1クエリあたりの最大検索件数 (デフォルト: {DEFAULT_SEARCH_COUNT_PER_KEYWORD})",
+        help=f"1回のリクエスト（1ページ）あたりの最大検索件数 (API上限1000, デフォルト: {DEFAULT_SEARCH_COUNT_PER_KEYWORD})",
     )
+    parser_p1.add_argument(
+        "--max-papers-per-keyword",
+        type=int,
+        default=DEFAULT_MAX_PAPERS_PER_KEYWORD,
+        help=f"1つのキーワードで取得する論文の総数の上限 (デフォルト: {DEFAULT_MAX_PAPERS_PER_KEYWORD})",
+    )
+    
     parser_p1.add_argument(
         "--max-queries",
         type=int,
@@ -90,7 +98,7 @@ def main():
     # 5. 引数を解析
     args = parser.parse_args()
 
-    # --- APIキーのチェックを一度だけ実行 ---
+    # APIキーのチェックを一度だけ実行
     check_api_key()
 
     # 6. コマンドに基づいて処理を分岐
