@@ -359,7 +359,7 @@ def generate_persona(paper_theme: str, paper_content: str, gemini_api_key: str) 
     print("～～～～～～～～～～～～～～～～～～")
 
     response = client.models.generate_content(
-        model="gemini-1.5-pro-latest", # スキーマが巨大なためProモデルが必須
+        model="gemini-2.5-flash-lite", # スキーマが巨大なためProモデルが必須
         contents=prompt,
         config={
             "response_mime_type": "application/json",

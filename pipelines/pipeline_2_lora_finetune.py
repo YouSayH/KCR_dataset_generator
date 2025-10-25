@@ -271,7 +271,7 @@ def process_full_plan_generation(job_data: dict, gemini_api_key: str) -> dict:
 
     try:
         response = client.models.generate_content(
-            model="gemini-1.5-flash-latest", # 全項目生成は高機能モデル推奨
+            model="gemini-2.5-flash-lite", # 全項目生成は高機能モデル推奨
             contents=prompt,
             config={
                 "response_mime_type": "application/json",
