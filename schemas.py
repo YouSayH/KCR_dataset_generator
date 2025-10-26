@@ -1380,11 +1380,12 @@ class PersonaStage_Merged_4_GoalsAndActivity(
 # (PersonaStage_Goal_ContextFactors は8段階プランで既に定義済みのため、ここでは定義不要)
 
 
-# --- 最終的な「5段階」の実行リスト ---
-PERSONA_GENERATION_STAGES_5 = [
-    PersonaStage_Merged_1_BasicAndGeneral,    # ステージ1
-    PersonaStage_Merged_2_MotorAndCognitive,  # ステージ2
-    PersonaStage_ADL,                         # ステージ3 (既存の定義を利用)
-    PersonaStage_Merged_4_GoalsAndActivity,   # ステージ4
-    PersonaStage_Goal_ContextFactors,         # ステージ5 (既存の定義を利用)
+PERSONA_GENERATION_STAGES_7 = [
+    PersonaStage_BasicAndSocial,              # ステージ1 (8段階の1)
+    PersonaStage_GeneralFuncAndNutrition,     # ステージ2 (8段階の2)
+    PersonaStage_Merged_2_MotorAndCognitive,  # ステージ3 (8段階の3+4)
+    PersonaStage_ADL,                         # ステージ4 (8段階の5)
+    PersonaStage_Goals,                       # ステージ5 (8段階の6) ★分割★
+    PersonaStage_Goal_Activity,               # ステージ6 (8段階の7) ★分割★
+    PersonaStage_Goal_ContextFactors,         # ステージ7 (8段階の8)
 ]

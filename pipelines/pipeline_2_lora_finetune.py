@@ -212,20 +212,20 @@ def convert_persona_to_japanese_dict(persona_data: dict) -> dict:
 # プロンプトテンプレート
 LORA_GENERATION_PROMPT_TEMPLATE = """
 あなたは、LoRAファインチューニング用の高品質な教師データを作成する専門家です。
-以下の【入力データ】（患者ペルソナと関連論文）を基に、**リハビリテーション実施計画書の全項目**を生成してください。
+以下の【入力データ】（患者ペルソナと関連論文）を基に、**リハビリテーション総合実施計画書の全項目**を生成してください。
 出力は、指定されたJSONスキーマに厳密に従ってください。
 
 【入力データ】
 {input_data_json}
 
 【指示】
-上記の入力データを基に、臨床的に妥当で、一貫性のあるリハビリテーション実施計画書（`RehabPlanSchema`）を完成させよ。
+上記の入力データを基に、臨床的に妥当で、一貫性のあるリハビリテーション総合実施計画書（`RehabPlanSchema`）を完成させよ。
 ペルソナの背景や希望、論文の知見を最大限に反映すること。
 """
 
 def process_full_plan_generation(job_data: dict, gemini_api_key: str) -> dict:
     """
-    【新版】リハビリ計画書（全項目）を一括生成する関数
+    【新版】リハビリ総合実施計画書（全項目）を一括生成する関数
     ペルソナの入力キーを日本語に変換する処理を含む
     """
     print(f"  [Pipeline 2] LoRAデータ生成ジョブ(一括)を開始: {job_data.get('job_id')}")
@@ -315,7 +315,7 @@ def process_full_plan_generation(job_data: dict, gemini_api_key: str) -> dict:
     
     # 5. Alpaca形式のJSONLを作成
     alpaca_record = {
-        "instruction": "患者ペルソナと関連論文に基づき、包括的なリハビリテーション実施計画書を生成せよ。",
+        "instruction": "患者ペルソナと関連論文に基づき、包括的なリハビリテーション総合実施計画書を生成せよ。",
         "input": input_data_for_dataset, # ★入力は「日本語キーのペルソナ」と「論文」★
         "output": parsed_response.model_dump() # ★出力は「英語キーの計画書項目」★
     }
