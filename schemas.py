@@ -1345,3 +1345,46 @@ PERSONA_GENERATION_STAGES_8 = [
     PersonaStage_Goal_Activity,      # 分割2
     PersonaStage_Goal_ContextFactors, # 分割3
 ]
+
+# ステージ1: 基本情報 + 全般機能 (8段階の 1 + 2 をマージ)
+class PersonaStage_Merged_1_BasicAndGeneral(
+    PatientInfo_Basic, 
+    PatientInfo_Social,
+    PatientInfo_Function_General, 
+    PatientInfo_Nutrition
+):
+    """ペルソナ生成ステージ1: 基本情報、社会情報、全般的機能、栄養"""
+    pass
+
+# ステージ2: 運動 + 認知機能 (8段階の 3 + 4 をマージ)
+class PersonaStage_Merged_2_MotorAndCognitive(
+    PatientInfo_Function_Motor, 
+    PatientInfo_BasicMovements,
+    PatientInfo_Function_Cognitive
+):
+    """ペルソナ生成ステージ2: 詳細な運動・認知機能、基本動作"""
+    pass
+
+# ステージ3: ADL (8段階の 5 をそのまま使用)
+# (PersonaStage_ADL は8段階プランで既に定義済みのため、ここでは定義不要)
+
+# ステージ4: 目標設定 + 活動目標 (8段階の 6 + 7 をマージ)
+class PersonaStage_Merged_4_GoalsAndActivity(
+    PatientInfo_Goals,
+    PatientInfo_Goal_Activity
+):
+    """ペルソナ生成ステージ4: 目標設定と活動目標"""
+    pass
+
+# ステージ5: 関連因子 (8段階の 8 をそのまま使用)
+# (PersonaStage_Goal_ContextFactors は8段階プランで既に定義済みのため、ここでは定義不要)
+
+
+# --- 最終的な「5段階」の実行リスト ---
+PERSONA_GENERATION_STAGES_5 = [
+    PersonaStage_Merged_1_BasicAndGeneral,    # ステージ1
+    PersonaStage_Merged_2_MotorAndCognitive,  # ステージ2
+    PersonaStage_ADL,                         # ステージ3 (既存の定義を利用)
+    PersonaStage_Merged_4_GoalsAndActivity,   # ステージ4
+    PersonaStage_Goal_ContextFactors,         # ステージ5 (既存の定義を利用)
+]
