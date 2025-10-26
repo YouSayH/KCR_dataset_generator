@@ -11,7 +11,7 @@ import time # sleep用にインポート
 
 # schemas.py から PatientMasterSchema と分割スキーマ群をインポート
 # from schemas import PatientMasterSchema, PATIENT_INFO_EXTRACTION_GROUPS
-from schemas import PatientMasterSchema, PERSONA_GENERATION_STAGES_8
+from schemas import PatientMasterSchema, PERSONA_GENERATION_STAGES_8, PatientPersona
 
 # --- 1. Pydanticによるペルソナのスキーマ定義 ---
 # (PatientPersonaクラスの定義は変更なしのため省略)
@@ -376,7 +376,7 @@ def generate_persona(paper_theme: str, paper_content: str, gemini_api_key: str) 
     print("～～～～～～～～～～～～～～～～～～")
 
     # PATIENT_INFO_EXTRACTION_GROUPS の代わりに PERSONA_GENERATION_STAGES をループ
-    for group_schema in PERSONA_GENERATION_STAGES_8: # <--- ★★★ ここを変更 ★★★
+    for group_schema in PERSONA_GENERATION_STAGES_8:
         print(f"  -> ステージ '{group_schema.__name__}' の情報を生成中...")
 
 
@@ -439,22 +439,41 @@ def generate_persona(paper_theme: str, paper_content: str, gemini_api_key: str) 
         # APIレート制限対策 (ステージ間の待機時間は少し長めにしても良いかもしれません)
         time.sleep(3) # 各ステージ生成後に待機
         
-    # 最終的なチェック（任意）
     if not final_persona_data:
-        raise ValueError("ペルソナ生成に失敗しました: どのグループからも有効なデータが得られませんでした。")
+        raise ValueError("ペルソナ生成に失敗しました: どのステージからも有効なデータが得られませんでした。")
+
+    # PatientPersona スキーマのフィールド順序に従って辞書を再構築
+    ordered_persona_data = {}
+    # Pydantic V2以降の場合:
+    for field_name in PatientPersona.model_fields.keys():
+        if field_name in final_persona_data:
+            ordered_persona_data[field_name] = final_persona_data[field_name]
+        else:
+            # スキーマにあって生成結果にない場合は None を設定 (任意)
+            ordered_persona_data[field_name] = None
+    # Pydantic V1の場合 (もしV1を使っている場合):
+    # for field_name in PatientPersona.__fields__:
+    #     if field_name in final_persona_data:
+    #         ordered_persona_data[field_name] = final_persona_data[field_name]
+    #     else:
+    #         ordered_persona_data[field_name] = None
 
     # オプション: 最後に完全な PatientPersona スキーマで検証
     try:
-        PatientPersona(**final_persona_data)
-        print("\n～～～ 全グループの生成・結合完了 ～～～")
+        # 検証には順序付け前のデータではなく、再構築したデータを使う
+        validated_persona = PatientPersona(**ordered_persona_data)
+        # 検証済みのデータを最終結果とする (Pydanticオブジェクトではなく辞書として返す場合は .model_dump() を使う)
+        final_ordered_dict = validated_persona.model_dump(mode='json', exclude_none=True) # exclude_none=True で None のキーを除外
+        print("\n～～～ 全ステージの生成・結合・順序付け完了 ～～～")
     except Exception as validation_e:
         print(f"\n[警告] 最終的なペルソナデータの検証中にエラーが発生しました: {validation_e}")
-        print("データは生成されましたが、完全なスキーマに適合しない可能性があります。")
+        print("データは生成・順序付けされましたが、完全なスキーマに適合しない可能性があります。")
+        # 検証に失敗した場合でも、順序付けされた辞書を返す
+        final_ordered_dict = ordered_persona_data
 
 
-    # 最終的に結合された辞書を返す
-    return final_persona_data
-
+    # 最終的に順序付けされた辞書を返す
+    return final_ordered_dict
 
 # 3. このファイル単体で動作確認するためのテストコード
 if __name__ == "__main__":
