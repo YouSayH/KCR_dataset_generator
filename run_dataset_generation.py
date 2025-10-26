@@ -109,7 +109,7 @@ def run_p2_and_p3():
                 )
 
                 with open(persona_path, "w", encoding="utf-8") as f:
-                    f.write(persona_obj.model_dump_json(indent=2, ensure_ascii=False))
+                    json.dump(persona_obj, f, indent=2, ensure_ascii=False, default=str)
                 print(f"  -> (1/3) ペルソナを保存しました: {persona_filename}")
             except Exception as e:
                 print(f"  -> !! エラー: {base_name} のペルソナ生成中に失敗。")
