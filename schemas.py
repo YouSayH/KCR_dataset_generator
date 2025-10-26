@@ -1323,33 +1323,25 @@ SEQUENTIAL_GENERATION_ORDER = [
 #     PersonaStage3_ADL,
 #     PersonaStage4_GoalsAndContext,
 # ]
-
 # schemas.py の末尾に追加
-class PersonaStage_BasicAndSocial(PatientInfo_Basic, PatientInfo_Social): 
-    pass
+class PersonaStage_BasicAndSocial(PatientInfo_Basic, PatientInfo_Social): pass
+class PersonaStage_GeneralFuncAndNutrition(PatientInfo_Function_General, PatientInfo_Nutrition): pass
+class PersonaStage_MotorAndBasicMove(PatientInfo_Function_Motor, PatientInfo_BasicMovements): pass
+class PersonaStage_Cognitive(PatientInfo_Function_Cognitive): pass # 単体
+class PersonaStage_ADL(PatientInfo_ADL): pass # 単体
+# --- PersonaStage_GoalsAndContext を分割 ---
+class PersonaStage_Goals(PatientInfo_Goals): pass # 目標設定のみ
+class PersonaStage_Goal_Activity(PatientInfo_Goal_Activity): pass # 活動目標のみ
+class PersonaStage_Goal_ContextFactors(PatientInfo_Goal_Psychological, PatientInfo_Goal_Environment, PatientInfo_Goal_HumanFactors): pass # 残りの関連因子
 
-class PersonaStage_GeneralFuncAndNutrition(PatientInfo_Function_General, PatientInfo_Nutrition): 
-    pass
-
-class PersonaStage_MotorAndBasicMove(PatientInfo_Function_Motor, PatientInfo_BasicMovements): 
-    pass
-
-class PersonaStage_Cognitive(PatientInfo_Function_Cognitive): 
-    pass # 単体
-
-class PersonaStage_ADL(PatientInfo_ADL): 
-    pass # 単体
-
-class PersonaStage_GoalsAndContext(PatientInfo_Goals, PatientInfo_Goal_Activity, PatientInfo_Goal_Psychological, PatientInfo_Goal_Environment, PatientInfo_Goal_HumanFactors): 
-    pass # これはまとめても大丈夫そう
-
-
-# 新しい6段階のリスト
-PERSONA_GENERATION_STAGES_6 = [
+# 新しい8段階のリスト
+PERSONA_GENERATION_STAGES_8 = [
     PersonaStage_BasicAndSocial,
     PersonaStage_GeneralFuncAndNutrition,
     PersonaStage_MotorAndBasicMove,
     PersonaStage_Cognitive,
     PersonaStage_ADL,
-    PersonaStage_GoalsAndContext,
+    PersonaStage_Goals,              # 分割1
+    PersonaStage_Goal_Activity,      # 分割2
+    PersonaStage_Goal_ContextFactors, # 分割3
 ]
