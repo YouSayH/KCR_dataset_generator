@@ -11,7 +11,7 @@ import time # sleep用にインポート
 
 # schemas.py から PatientMasterSchema と分割スキーマ群をインポート
 # from schemas import PatientMasterSchema, PATIENT_INFO_EXTRACTION_GROUPS
-from schemas import PatientMasterSchema, PERSONA_GENERATION_STAGES
+from schemas import PatientMasterSchema, PERSONA_GENERATION_STAGES_6
 
 # --- 1. Pydanticによるペルソナのスキーマ定義 ---
 # (PatientPersonaクラスの定義は変更なしのため省略)
@@ -376,8 +376,9 @@ def generate_persona(paper_theme: str, paper_content: str, gemini_api_key: str) 
     print("～～～～～～～～～～～～～～～～～～")
 
     # PATIENT_INFO_EXTRACTION_GROUPS の代わりに PERSONA_GENERATION_STAGES をループ
-    for group_schema in PERSONA_GENERATION_STAGES: # <--- ★★★ ここを変更 ★★★
-        print(f"  -> ステージ '{group_schema.__name__}' の情報を生成中...") # メッセージを修正
+    for group_schema in PERSONA_GENERATION_STAGES_6: # <--- ★★★ ここを変更 ★★★
+        print(f"  -> ステージ '{group_schema.__name__}' の情報を生成中...")
+
 
         # プロンプトを構築
         prompt = _build_staged_persona_prompt(
