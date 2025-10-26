@@ -111,6 +111,7 @@ def main():
             run_pipeline_1_rag_source.run(args, KEYWORD_LIST_MAP) # 第2引数を追加
         except ImportError:
             print("エラー: run_pipeline_1_rag_source.py が見つかりません。")
+            print(f"  [詳細] これが本当の原因である可能性が高いです: {e}")
         except Exception as e:
             print(f"パイプライン1の実行中に予期せぬエラーが発生しました: {e}")
 
@@ -122,6 +123,7 @@ def main():
             run_dataset_generation.main()
         except ImportError:
             print("エラー: run_dataset_generation.py が見つかりません。")
+            print(f"  [詳細] これが本当の原因である可能性が高いです: {e}")
         except Exception as e:
             print(f"データセット生成中に予期せぬエラーが発生しました: {e}")
 

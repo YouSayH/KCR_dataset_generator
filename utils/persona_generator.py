@@ -11,7 +11,7 @@ import time # sleep用にインポート
 
 # schemas.py から PatientMasterSchema と分割スキーマ群をインポート
 # from schemas import PatientMasterSchema, PATIENT_INFO_EXTRACTION_GROUPS
-from schemas import PatientMasterSchema, PERSONA_GENERATION_STAGES_8, PatientPersona
+from schemas import PatientMasterSchema, PERSONA_GENERATION_STAGES_8
 
 # --- 1. Pydanticによるペルソナのスキーマ定義 ---
 # (PatientPersonaクラスの定義は変更なしのため省略)
