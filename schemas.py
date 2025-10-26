@@ -1284,3 +1284,42 @@ SEQUENTIAL_GENERATION_ORDER = [
     ('goal_s_psychological_action_plan_txt', ActionPlans),
     ('goal_s_3rd_party_action_plan_txt', ActionPlans),
 ]
+
+class PersonaStage1_BasicAndGeneralFunction(
+    PatientInfo_Basic,
+    PatientInfo_Function_General,
+    PatientInfo_Social,
+    PatientInfo_Nutrition
+):
+    """ペルソナ生成ステージ1: 基本情報、全般的機能、社会情報、栄養"""
+    pass
+
+class PersonaStage2_DetailedFunction(
+    PatientInfo_Function_Motor,
+    PatientInfo_Function_Cognitive,
+    PatientInfo_BasicMovements
+):
+    """ペルソナ生成ステージ2: 詳細な運動・認知機能、基本動作"""
+    pass
+
+class PersonaStage3_ADL(PatientInfo_ADL):
+    """ペルソナ生成ステージ3: ADL評価"""
+    pass
+
+class PersonaStage4_GoalsAndContext(
+    PatientInfo_Goals,
+    PatientInfo_Goal_Activity,
+    PatientInfo_Goal_Psychological,
+    PatientInfo_Goal_Environment,
+    PatientInfo_Goal_HumanFactors
+):
+    """ペルソナ生成ステージ4: 目標設定と関連因子"""
+    pass
+
+# 新しい段階的生成のためのスキーマリスト
+PERSONA_GENERATION_STAGES = [
+    PersonaStage1_BasicAndGeneralFunction,
+    PersonaStage2_DetailedFunction,
+    PersonaStage3_ADL,
+    PersonaStage4_GoalsAndContext,
+]

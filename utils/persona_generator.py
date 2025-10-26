@@ -1,17 +1,20 @@
 import os
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Type # Type をインポート
 from datetime import date
 from google import genai
+from google.genai import types # types をインポート
+from google.api_core.exceptions import ResourceExhausted, ServiceUnavailable # エラーハンドリング用
 import json
-# schemas.py から PatientMasterSchema のフィールド定義を借用するためにインポート
-from schemas import PatientMasterSchema
+import time # sleep用にインポート
+
+# schemas.py から PatientMasterSchema と分割スキーマ群をインポート
+# from schemas import PatientMasterSchema, PATIENT_INFO_EXTRACTION_GROUPS
+from schemas import PatientMasterSchema, PERSONA_GENERATION_STAGES
 
 # --- 1. Pydanticによるペルソナのスキーマ定義 ---
-# PatientMasterSchema をほぼそのまま流用し、PatientPersona とする
-# (署名など、患者の状態記述に不要な項目は除外)
-
+# (PatientPersonaクラスの定義は変更なしのため省略)
 class PatientPersona(BaseModel):
     """
     【最大限拡張版】リハビリテーション計画のシミュレーションに使用する、詳細な架空の患者ペルソナ。
@@ -317,13 +320,25 @@ class PatientPersona(BaseModel):
 
     # 注意: _action_plan_txt 系はP2(LoRA)の出力なのでペルソナには含めない
 
-# 2. Geminiに投げるためのメタプロンプト (プロンプトは前回提案したものでOK)
-PERSONA_GENERATION_PROMPT_TEMPLATE = """
-あなたは経験豊富な臨床家であり、脚本家でもあります。
-以下の【関連論文の内容】を読み、その内容に**最もふさわしい、臨床的にあり得るリアルな架空の患者プロフィール**を**1人分**創作してください。
+def _build_staged_persona_prompt(
+    paper_theme: str,
+    paper_content: str,
+    group_schema: Type[BaseModel],
+    generated_data_so_far: dict
+) -> str:
+    """段階的ペルソナ生成用のプロンプトを構築する"""
 
-このプロフィールは、リハビリテーション実施計画書（P2 LoRA）の**入力(Input)**データ、およびカルテ抽出（P3 Parser）の**出力(Output)**データとして使用されます。
-そのため、必ず指定されたJSONスキーマに厳密に従い、**スキーマで定義されている全ての項目について、臨床的に妥当な値を創作または判断して埋めてください**。特にブール型 (`_chk` で終わる項目など) は `true` か `false` を明確に設定してください。情報がない場合は `null` としてください。
+    # これまでに生成されたデータを簡潔なサマリーにする
+    summary = json.dumps(generated_data_so_far, indent=2, ensure_ascii=False, default=str) if generated_data_so_far else "まだありません。"
+
+    # 今回の生成対象スキーマをJSON形式の文字列としてプロンプトに含める
+    schema_json = json.dumps(group_schema.model_json_schema(), indent=2, ensure_ascii=False)
+
+    return f"""あなたは経験豊富な臨床家であり、脚本家でもあります。
+以下の【関連論文の内容】とその【テーマ】、そして【これまでに生成されたペルソナ情報】を読み、**続きとなる**リアルな架空の患者プロフィールを創作してください。
+
+今回のタスクでは、以下の【JSONスキーマ】で定義されている項目**のみ**を生成対象とします。
+スキーマで定義されている全ての項目について、臨床的に妥当な値を創作または判断して埋めてください。特にブール型 (`_chk` で終わる項目など) は `true` か `false` を明確に設定してください。情報がない場合は `null` としてください。
 
 【関連論文のテーマ】
 {paper_theme}
@@ -331,54 +346,114 @@ PERSONA_GENERATION_PROMPT_TEMPLATE = """
 【関連論文の内容】
 {paper_content}
 
-【生成するプロファイルの要件】
-- **臨床的整合性**: 論文のテーマ（疾患、術式、患者集団）と完全に一致する「算定病名」「年齢」「性別」を設定してください。
-- **客観的データの創作**: 論文の内容とペルソナの背景に基づき、臨床的に妥当な「発症日・手術日」「リハ開始日」「FIM点数」「身長」「体重」などの客観的データを**創作**してください。
-- **心身機能の具体化**: 「心身機能・構造」セクションの**各項目（特にブール型の `_chk` 項目）**について、論文内容や設定した基本情報（疾患、年齢など）から**最も可能性の高い状態**を判断し、`true` または `false` を設定してください。関連する詳細記述 (`_txt` など) も適切に創作してください。
-- **背景の具体化**: 参加目標や趣味に関する項目 (`goal_p_..._txt`) には、その人らしさが伝わる背景（職業、家族構成、趣味）と、本人の具体的な希望・目標を**文章で**記述してください。
-- **一貫性**: 「心身機能・構造」の記述（特に `true` にした項目）は、「ADL評価」のFIM/BIスコアや「基本動作」のレベルと論理的に一貫している必要があります。（例：麻痺の有無が `true` なら、関連するADL項目（移動、更衣など）の点数は低くなるはずです）
+【これまでに生成されたペルソナ情報】
+{summary}
 
-出力は、指定されたJSONスキーマ（`PatientPersona`）に厳密に従ってください。
+【生成するプロファイルの要件】
+- **臨床的整合性**: 論文のテーマや、既に生成されたペルソナ情報と矛盾しないように値を設定してください。
+- **客観的データの創作**: 論文の内容や既存のペルソナ情報に基づき、臨床的に妥当な客観的データ（FIM点数、身長、体重など）を創作してください。
+- **心身機能の具体化**: （もし今回のスキーマに含まれていれば）「心身機能・構造」の各項目（特にブール型の `_chk` 項目）について、最も可能性の高い状態を判断し、`true` または `false` を設定してください。関連する詳細記述 (`_txt` など) も適切に創作してください。
+- **背景の具体化**: （もし今回のスキーマに含まれていれば）参加目標や趣味に関する項目 (`goal_p_..._txt`) には、その人らしさが伝わる背景（職業、家族構成、趣味）と、本人の具体的な希望・目標を文章で記述してください。
+- **一貫性**: 今回生成する内容は、既に生成されたペルソナ情報と論理的に一貫している必要があります。（例：既に「麻痺あり」と生成されていれば、関連するADL項目（移動、更衣など）の点数は低くなるはずです）
+
+【今回生成するJSONスキーマ】
+{schema_json}
+
+出力は、上記の【今回生成するJSONスキーマ】に厳密に従ってください。
 """
 
-def generate_persona(paper_theme: str, paper_content: str, gemini_api_key: str) -> PatientPersona:
-    """
-    論文テーマと内容から、Geminiを使って【最大限拡張版】患者ペルソナを1つ生成する。
-    """
 
+def generate_persona(paper_theme: str, paper_content: str, gemini_api_key: str) -> dict: # 戻り値を PatientPersona から dict に変更
+    """
+    【修正版】論文テーマと内容から、Geminiを使って患者ペルソナを段階的に生成する。
+    """
     client = genai.Client(api_key=gemini_api_key)
+    final_persona_data = {} # 最終的な結果を格納する辞書
 
-    prompt = PERSONA_GENERATION_PROMPT_TEMPLATE.format(
-            paper_theme=paper_theme,
-            paper_content=paper_content # 論文内容を渡す
-        )
-
-    print("\n～～～ ペルソナ生成リクエスト（最大限拡張版） ～～～")
+    print("\n～～～ ペルソナ生成リクエスト（段階的生成 - 4段階） ～～～") # メッセージを修正
     print(f"テーマ: {paper_theme}")
     print(f"関連論文(冒頭):\n{paper_content[:300]}...")
     print("～～～～～～～～～～～～～～～～～～")
 
-    response = client.models.generate_content(
-        model="gemini-2.5-flash-lite", # スキーマが巨大なためProモデルが必須
-        contents=prompt,
-        config={
-            "response_mime_type": "application/json",
-            "response_schema": PatientPersona, # ★最大限拡張されたスキーマを指定
-            "temperature": 1.0 # 創造性と安定性のバランス
-        },
-    )
+    # PATIENT_INFO_EXTRACTION_GROUPS の代わりに PERSONA_GENERATION_STAGES をループ
+    for group_schema in PERSONA_GENERATION_STAGES: # <--- ★★★ ここを変更 ★★★
+        print(f"  -> ステージ '{group_schema.__name__}' の情報を生成中...") # メッセージを修正
 
-    if not hasattr(response, "parsed") or not response.parsed:
-        # パース失敗時のデバッグ情報
-        debug_info = {
-            "message": "APIからパース可能な応答がありませんでした。",
-            "finish_reason": response.candidates[0].finish_reason.name if response.candidates else "N/A",
-            "prompt_feedback": str(response.prompt_feedback),
-            "response_text": response.text if hasattr(response, "text") else "N/A"
-        }
-        raise ValueError(f"ペルソナ生成に失敗しました: {json.dumps(debug_info, ensure_ascii=False)}")
+        # プロンプトを構築
+        prompt = _build_staged_persona_prompt(
+            paper_theme=paper_theme,
+            paper_content=paper_content[:10000], # トークン数制限を考慮
+            group_schema=group_schema,
+            generated_data_so_far=final_persona_data
+        )
 
-    return response.parsed
+        # API呼び出し実行 (JSONモード)
+        generation_config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=group_schema,
+            temperature=1.0 # 創造性と安定性のバランス
+        )
+
+        # APIリトライ処理
+        max_retries = 3
+        backoff_factor = 2
+        response = None
+
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash-lite", # スキーマが少し大きくなったので Flash で試行継続
+                    contents=prompt,
+                    config=generation_config
+                )
+                break # 成功したらループを抜ける
+            except (ResourceExhausted, ServiceUnavailable) as e:
+                if attempt < max_retries - 1:
+                    wait_time = backoff_factor * (2 ** attempt)
+                    print(f"     [警告] APIレート制限またはサーバーエラー。{wait_time}秒後に再試行します... ({attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                else:
+                    print(f"     [エラー] API呼び出しが{max_retries}回失敗しました。ステージ '{group_schema.__name__}' をスキップします。")
+                    response = None # エラーが発生したことを示す
+                    break # ループを抜ける
+            except Exception as e: # その他の予期せぬエラー
+                print(f"     [エラー] ステージ '{group_schema.__name__}' の生成中に予期せぬエラー: {e}")
+                response = None
+                break
+
+        if response and response.parsed:
+            try:
+                # Pydanticオブジェクトを辞書に変換してマージ
+                group_result = response.parsed.model_dump(mode='json')
+                # 値がNoneのキーはマージしない
+                final_persona_data.update({k: v for k, v in group_result.items() if v is not None})
+                print(f"  -> ステージ '{group_schema.__name__}' 完了。")
+            except Exception as parse_e:
+                print(f"     [エラー] ステージ '{group_schema.__name__}' の結果パースまたはマージ中にエラー: {parse_e}")
+        else:
+            # response が None の場合 (APIエラー後) または response.parsed がない場合
+            print(f"  -> ステージ '{group_schema.__name__}' の生成に失敗またはスキップされました。")
+
+
+        # APIレート制限対策 (ステージ間の待機時間は少し長めにしても良いかもしれません)
+        time.sleep(3) # 各ステージ生成後に待機
+        
+    # 最終的なチェック（任意）
+    if not final_persona_data:
+        raise ValueError("ペルソナ生成に失敗しました: どのグループからも有効なデータが得られませんでした。")
+
+    # オプション: 最後に完全な PatientPersona スキーマで検証
+    try:
+        PatientPersona(**final_persona_data)
+        print("\n～～～ 全グループの生成・結合完了 ～～～")
+    except Exception as validation_e:
+        print(f"\n[警告] 最終的なペルソナデータの検証中にエラーが発生しました: {validation_e}")
+        print("データは生成されましたが、完全なスキーマに適合しない可能性があります。")
+
+
+    # 最終的に結合された辞書を返す
+    return final_persona_data
+
 
 # 3. このファイル単体で動作確認するためのテストコード
 if __name__ == "__main__":
@@ -397,14 +472,16 @@ if __name__ == "__main__":
 
     try:
         print("【テストケース1】")
-        persona_1 = generate_persona(
+        # generate_persona の戻り値は辞書になった
+        persona_dict = generate_persona(
             paper_theme="前十字靭帯(ACL)損傷 術後",
             paper_content=dummy_paper_content_1,
             gemini_api_key=api_key
         )
-        print("\n～～～ 生成されたペルソナ（最大限拡張版） ～～～")
-        # exclude_none=True で、値がNoneの項目はJSONに出力しない（見やすくするため）
-        print(persona_1.model_dump_json(indent=2, ensure_ascii=False, by_alias=True, exclude_none=True))
+        print("\n～～～ 生成されたペルソナ（段階的生成・結合後） ～～～")
+        # exclude_none=True 相当の処理は generate_persona 内のマージで行われている
+        # default=str で date オブジェクトもシリアル化
+        print(json.dumps(persona_dict, indent=2, ensure_ascii=False, default=str))
 
     except Exception as e:
         print(f"\nエラーが発生しました: {e}")
