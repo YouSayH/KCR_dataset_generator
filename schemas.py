@@ -159,8 +159,8 @@ class PatientMasterSchema(BaseModel):
     """カルテの自由記述テキストから抽出した患者マスタ情報。可能な限り全ての項目を埋めてください。不明な項目はnullにしてください。"""
 
     # --- Patientモデル由来の項目 ---
-    name: Optional[str] = Field(None, description="患者氏名")
-    age: Optional[int] = Field(None, description="患者の年齢")
+    name: Optional[str] = Field(None, description="患者氏名。 なるべく多様な名前を設定してください。 山田や佐藤、太郎などの名前が多いので、もっと多様な名前にしてほしい。")
+    age: Optional[int] = Field(None, description="患者の年齢。 病気にあう程度に、多様な年齢にしてほしい(論文に年齢が書いてある場合はそっちに合わせる感じ。)。 70代が多い。50、60、80、90、40代を増やしてもいいのでは？")
     gender: Optional[str] = Field(None, description="患者の性別。'男'または'女'")
 
     # --- RehabilitationPlanモデル由来の項目 ---

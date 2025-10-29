@@ -400,7 +400,7 @@ def generate_persona(paper_theme: str, paper_content: str, gemini_api_key: str) 
         generation_config = types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=group_schema,
-            temperature=1.0 # 創造性と安定性のバランス
+            temperature=1.5 # 創造性と安定性のバランス
         )
 
         # APIリトライ処理
