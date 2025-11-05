@@ -1,8 +1,16 @@
 import os
+import sys
 import re
 import json
 import random
 from rank_bm25 import BM25Okapi
+try:
+    import MeCab
+except ImportError:
+    print("エラー: MeCabライブラリが見つかりません。", file=sys.stderr)
+    print("pip install mecab-python3 を実行してインストールしてください。", file=sys.stderr)
+    sys.exit(1)
+
 
 # --- 設定 ---
 INPUT_DIR = "output/pipeline_1_rag_source"
@@ -83,6 +91,18 @@ def main():
     パイプライン4のメイン処理を実行する。
     """
     # --- 1. 正解ペア [query, positive] の全件抽出 ---
+
+
+    print("MeCab Taggerを初期化中...")
+    try:
+        # -Owakati は分かち書きを出力するオプション
+        mecab_tagger = MeCab.Tagger("-Owakati")
+    except RuntimeError as e:
+        print(f"エラー: MeCab Taggerの初期化に失敗しました。{e}", file=sys.stderr)
+        print("MeCabまたは辞書（例: mecab-ipadic-neologd）が正しくインストールされているか確認してください。", file=sys.stderr)
+        return
+    print("-> MeCab Tagger 初期化完了。")
+
     positive_pairs, corpus = extract_positive_pairs(INPUT_DIR)
     if not positive_pairs:
         print("処理対象のMarkdownファイルが見つからなかったため、処理を終了します。")
@@ -90,7 +110,11 @@ def main():
 
     # --- 2. Hard Negative MiningのためのBM25インデックス構築 ---
     print("Hard Negative MiningのためのBM25インデックスを構築中...")
-    tokenized_corpus = [doc.split(" ") for doc in corpus]
+    # MeCabでコーパス全体をトークン化（分かち書き）
+    # mecab_tagger.parse(doc) は "単語1 単語2 単語3 \n" のような文字列を返す
+    # .split() でリスト ['単語1', '単語2', '単語3'] に変換する
+    tokenized_corpus = [mecab_tagger.parse(doc).split() for doc in corpus]
+    # tokenized_corpus = [doc.split(" ") for doc in corpus]
     bm25 = BM25Okapi(tokenized_corpus)
     print("-> インデックス構築完了。")
 
@@ -102,7 +126,7 @@ def main():
     count = 0
     with open(output_filepath, 'w', encoding='utf-8') as f:
         for query, positive in positive_pairs:
-            tokenized_query = query.split(" ")
+            tokenized_query = mecab_tagger.parse(query).split()
             
             # BM25でキーワードが似ている上位10件のドキュメントを取得
             top_10_docs = bm25.get_top_n(tokenized_query, corpus, n=10)
