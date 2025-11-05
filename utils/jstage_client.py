@@ -1,12 +1,13 @@
 import os
 import time
-import requests
+# import requests
+import httpx
 import xml.etree.ElementTree as ET
 from dotenv import load_dotenv
 
 # --- リトライ機能のために追加 ---
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+# from requests.adapters import HTTPAdapter
+# from urllib3.util.retry import Retry
 # ------------------------------
 
 load_dotenv()
@@ -26,20 +27,31 @@ class JStageClient:
         self.base_url = "https://api.jstage.jst.go.jp/searchapi/do"
         self.last_request_time = 0
 
-        # BAN対策：リトライ戦略の定義
-        retry_strategy = Retry(
-            total=3,  # 合計リトライ回数
-            status_forcelist=[429, 500, 502, 503, 504],  # リトライするHTTPステータスコード
-            backoff_factor=1,  # バックオフ係数 (待機時間 = {backoff_factor} * (2 ** ({リトライ回数} - 1)))
-            allowed_methods=["HEAD", "GET", "OPTIONS"],  # リトライを許可するメソッド
-        )
+        # # BAN対策：リトライ戦略の定義
+        # retry_strategy = Retry(
+        #     total=3,  # 合計リトライ回数
+        #     status_forcelist=[429, 500, 502, 503, 504],  # リトライするHTTPステータスコード
+        #     backoff_factor=1,  # バックオフ係数 (待機時間 = {backoff_factor} * (2 ** ({リトライ回数} - 1)))
+        #     allowed_methods=["HEAD", "GET", "OPTIONS"],  # リトライを許可するメソッド
+        # )
 
-        # BAN対策：セッションの構築
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        self.session = requests.Session()
-        self.session.mount("https://", adapter)
-        self.session.mount("http://", adapter)
-        self.session.headers.update(self.headers)
+        # # BAN対策：セッションの構築
+        # adapter = HTTPAdapter(max_retries=retry_strategy)
+        # self.session = requests.Session()
+        # self.session.mount("https://", adapter)
+        # self.session.mount("http://", adapter)
+        # self.session.headers.update(self.headers)
+
+        # httpx のリトライ設定
+        retries = 3
+        
+        # BAN対策：セッションの構築 (httpx版)
+        self.client = httpx.Client(
+            headers=self.headers,
+            follow_redirects=True, # リダイレクトを許可 (重要)
+            timeout=30.0,
+            transport=httpx.HTTPTransport(retries=retries) # シンプルなリトライ設定
+        )
 
     def _wait_for_interval(self):
         """
@@ -59,7 +71,8 @@ class JStageClient:
         self._wait_for_interval()
         try:
             print(f"[JStageClient] URLからコンテンツをダウンロード中: {url}")
-            response = self.session.get(url, timeout=30, allow_redirects=True)
+            # response = self.session.get(url, timeout=30, allow_redirects=True)
+            response = self.client.get(url)
             response.raise_for_status()
             content_type = response.headers.get("Content-Type", "").lower()
 
@@ -73,7 +86,8 @@ class JStageClient:
                     return response.content, "application/pdf"
                 else:
                     return response.content, "text/html" # デフォルトはHTML扱い
-        except requests.exceptions.RequestException as e:
+        # except requests.exceptions.RequestException as e:
+        except httpx.RequestError as e:
             print(f"[JStageClient] ダウンロード中にエラーが発生しました: {e}")
             return None, None
 
@@ -87,9 +101,10 @@ class JStageClient:
         print(f"[JStageClient] APIで論文を検索中 (keyword): '{keyword}', (start): {start}, (count): {count}")
 
         try:
-            response = self.session.get(self.base_url, params=params, timeout=30)
+            # response = self.session.get(self.base_url, params=params, timeout=30)
+            response = self.client.get(self.base_url, params=params)
             response.raise_for_status()
-            response.encoding = response.apparent_encoding
+            # response.encoding = response.apparent_encoding
             root = ET.fromstring(response.text)
 
             ns = {
@@ -134,7 +149,8 @@ class JStageClient:
                         html_url = html_link_elem.get("href")
                         # PDF URLへの変換ロジック (成功するとは限らない)
                         if html_url and "/_article/" in html_url:
-                            link_url = html_url.replace("/_article/", "/_pdf/").replace("-char/ja", "")
+                            # link_url = html_url.replace("/_article/", "/_pdf/").replace("-char/ja", "")
+                            link_url = html_url.replace("/_article/", "/_pdf/")
                         else:
                              link_url = html_url # 変換できなければHTML URLをそのまま使う
 
@@ -189,7 +205,8 @@ class JStageClient:
             return articles, total_results
 
         # エラーハンドリング
-        except requests.exceptions.RequestException as e:
+        # except requests.exceptions.RequestException as e:
+        except httpx.RequestError as e:
             print(f"[JStageClient] 論文検索APIへのリクエスト中にエラーが発生しました（リトライ後）: {e}")
             return [], 0
         except ET.ParseError as e:
