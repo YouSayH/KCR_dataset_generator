@@ -1,5 +1,6 @@
 import os
 import time
+import re
 # import requests
 import httpx
 import xml.etree.ElementTree as ET
@@ -143,22 +144,35 @@ class JStageClient:
                     link_url = pdf_link_elem.get("href")
 
                 # PDFがなければHTMLリンクを探し、PDF URLへの変換を試みる
+                # if link_url is None:
+                #     html_link_elem = entry.find('atom:link[@type="text/html"]', ns)
+                #     if html_link_elem is not None:
+                #         html_url = html_link_elem.get("href")
+                #         # PDF URLへの変換ロジック (成功するとは限らない)
+                #         if html_url and "/_article/" in html_url:
+                #             # link_url = html_url.replace("/_article/", "/_pdf/").replace("-char/ja", "")
+                #             link_url = html_url.replace("/_article/", "/_pdf/")
+                #         else:
+                #              link_url = html_url # 変換できなければHTML URLをそのまま使う
                 if link_url is None:
                     html_link_elem = entry.find('atom:link[@type="text/html"]', ns)
                     if html_link_elem is not None:
-                        html_url = html_link_elem.get("href")
-                        # PDF URLへの変換ロジック (成功するとは限らない)
-                        if html_url and "/_article/" in html_url:
-                            # link_url = html_url.replace("/_article/", "/_pdf/").replace("-char/ja", "")
-                            link_url = html_url.replace("/_article/", "/_pdf/")
-                        else:
-                             link_url = html_url # 変換できなければHTML URLをそのまま使う
+                        link_url = html_link_elem.get("href")
+
 
                 # 上記で見つからなければ、最初のatom:linkをフォールバックとして使う
                 if link_url is None:
                     fallback_link_elem = entry.find("atom:link", ns)
                     if fallback_link_elem is not None:
                         link_url = fallback_link_elem.get("href")
+                
+                # if link_url and "/_article/" in link_url:
+                #     link_url = link_url.replace("/_article/", "/_pdf/")
+
+                if link_url and "/_article/" in link_url:
+                    # 新ロジック: /_article/ と、それに続く余計な文字列（例: /-char/ja/）を
+                    # まとめて /_pdf/ に置換する
+                    link_url = re.sub(r'/_article/.*', '/_pdf/', link_url)
 
 
                 # 追加情報の抽出 (テストスクリプトの結果を反映)
