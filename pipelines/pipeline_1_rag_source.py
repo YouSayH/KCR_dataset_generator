@@ -160,15 +160,58 @@ def process_pipeline_1(job_data: dict, gemini_api_key: str) -> dict:
     (インラインデータ方式に修正)
     """
     client = genai.Client(api_key=gemini_api_key)
-
-    url = job_data.get("url")
-    if not url:
-        raise ValueError("ジョブデータにURLが含まれていません。")
-
     jstage_client = JStageClient()
-    content, content_type = jstage_client.download_article_content(url)
-    if not content or not content_type:
-        raise ConnectionError(f"URLからのコンテンツダウンロードに失敗しました: {url}")
+
+    # url = job_data.get("url")
+    pdf_url_to_try = job_data.get("url")
+    # if not url:
+    if not pdf_url_to_try:
+        raise ValueError("ジョブデータにURLが含まれていません。")
+    
+    metadata = job_data.get("metadata", {})
+    html_url_fallback = metadata.get("debug_original_url")
+
+    # content, content_type = jstage_client.download_article_content(url)
+    content, content_type = jstage_client.download_article_content(pdf_url_to_try)
+
+    # --- DEBUGGING START ---
+    # ユーザーのデバッグリクエストに対応
+    content_length_for_debug = len(content) if content else 0
+    print(f"    [DEBUG] ダウンロード試行。タイプ: {content_type}, サイズ: {content_length_for_debug} bytes")
+
+    is_pdf_success = content and content_type and "pdf" in content_type
+
+    if not is_pdf_success:
+        print(f"    [DEBUG] 1回目のPDFダウンロード失敗（またはPDFでない）。HTML URLにフォールバックします。")
+        print(f"    [DEBUG]   -> フォールバックURL: {html_url_fallback}")
+        
+        if not html_url_fallback or html_url_fallback == pdf_url_to_try:
+            # フォールバック先がない、または同じURL（=元からPDFリンクだった）場合
+            raise ConnectionError(f"PDFダウンロードに失敗。フォールバック先のHTML URLもありません。URL: {pdf_url_to_try}")
+
+        # HTML URLで再試行
+        content, content_type = jstage_client.download_article_content(html_url_fallback)
+        content_length_for_debug = len(content) if content else 0
+        print(f"    [DEBUG] ダウンロード試行 (2回目: HTML URL)。タイプ: {content_type}, サイズ: {content_length_for_debug} bytes")
+
+        if not content or not content_type or "html" not in content_type:
+            # 2回目も失敗
+            raise ConnectionError(f"PDFとHTMLの両方のダウンロードに失敗しました。PDF: {pdf_url_to_try}, HTML: {html_url_fallback}")
+
+        # ★重要★ HTMLフォールバックが成功した場合、source_urlもHTMLのものに差し替える
+        job_data["url"] = html_url_fallback
+
+
+    # if "pdf" in (content_type or ""):
+    #     print(f"    [DEBUG] -> PDFとして処理します。")
+    # elif "html" in (content_type or ""):
+    #     print(f"    [DEBUG] -> HTMLとして処理します。")
+    # else:
+    #     print(f"    [DEBUG] -> 不明なコンテントタイプ、またはダウンロード失敗。")
+    # --- DEBUGGING END ---
+
+    # if not content or not content_type:
+    #     raise ConnectionError(f"URLからのコンテンツダウンロードに失敗しました: {url}")
 
     # model_name = "gemini-2.5-flash-lite"
     model_name = "gemini-2.5-flash"
@@ -197,19 +240,21 @@ def process_pipeline_1(job_data: dict, gemini_api_key: str) -> dict:
         markdown_body = response.text
 
     else:
-        raise TypeError(f"サポートされていないコンテントタイプです: {content_type}")
+        raise TypeError(f"サポートされていないコンテントタイプです: {content_type} (URL: {job_data.get('url')})")
 
     if not markdown_body:
         raise RuntimeError("Gemini APIから空の応答がありました。Markdownを生成できませんでした。")
 
     # YAML Frontmatterを作成
     metadata = job_data.get("metadata", {})
+    # html_url_fallback = metadata.get("debug_original_url")
+    
     frontmatter = f"""---
 title: "{metadata.get("title", "N/A").replace('"', "'")}"
 doi: "{metadata.get("doi", "N/A")}"
 journal: "{metadata.get("journal", "N/A")}"
 published_date: "{metadata.get("published_date", "N/A")}"
-source_url: "{url}"
+source_url: "{job_data.get('url')}"
 ---
 """
 

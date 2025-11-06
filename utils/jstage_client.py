@@ -21,7 +21,7 @@ class JStageClient:
     """
 
     def __init__(self):
-        self.request_interval = float(os.getenv("JSTAGE_REQUEST_INTERVAL", 1.5))
+        self.request_interval = float(os.getenv("JSTAGE_REQUEST_INTERVAL", 10))
         self.headers = {
             "User-Agent": "DatasetGenerator/1.0 (https://github.com/YouSayH/kcr_Rehab-Plan-Generator; mailto:your-email@example.com)"
         }
@@ -88,7 +88,7 @@ class JStageClient:
                 else:
                     return response.content, "text/html" # デフォルトはHTML扱い
         # except requests.exceptions.RequestException as e:
-        except httpx.RequestError as e:
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
             print(f"[JStageClient] ダウンロード中にエラーが発生しました: {e}")
             return None, None
 
@@ -165,6 +165,8 @@ class JStageClient:
                     fallback_link_elem = entry.find("atom:link", ns)
                     if fallback_link_elem is not None:
                         link_url = fallback_link_elem.get("href")
+
+                original_link_url = link_url
                 
                 # if link_url and "/_article/" in link_url:
                 #     link_url = link_url.replace("/_article/", "/_pdf/")
@@ -209,6 +211,7 @@ class JStageClient:
                             "url": link_url,
                             "journal": journal_name,
                             "published_date": published_date,
+                            "debug_original_url": original_link_url,
                         }
                     )
 

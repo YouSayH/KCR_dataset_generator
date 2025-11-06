@@ -193,6 +193,16 @@ def run_search_loop(
 
                 logger.info(f"  -> 新規処理: {article['title']} ({doi})")
 
+                # --- DEBUGGING START ---
+                # ユーザーのデバッグリクエストに対応
+                original_url_for_debug = article.get("debug_original_url", "N/A")
+                final_url_for_debug = article.get("url", "N/A")
+                logger.info("    [DEBUG] J-STAGE APIから取得したURL情報:")
+                logger.info(f"    [DEBUG]   - 元URL (API/HTML): {original_url_for_debug}")
+                logger.info(f"    [DEBUG]   - 処理後URL (DL対象): {final_url_for_debug}")
+                if original_url_for_debug != final_url_for_debug:
+                     logger.info("    [DEBUG]   - (注) /_article/ から /_pdf/ へのURL変換が実行されました。")
+                # --- DEBUGGING END ---
 
                 job_data = {
                     "pipeline": "rag_source",
@@ -201,7 +211,8 @@ def run_search_loop(
                         "title": article.get("title", "N/A"), # Use .get for safety
                         "doi": doi,
                         "journal": article.get("journal", "N/A"), # ★追加★
-                        "published_date": article.get("published_date", "N/A") # ★追加★
+                        "published_date": article.get("published_date", "N/A"), # ★追加★
+                        "debug_original_url": article.get("debug_original_url", "")
                     },
                 }
 
